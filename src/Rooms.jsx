@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FIELDS, VARIANTS } from './game/constants.js'
 import { watchRooms } from './net/lobby.js'
+import { parseRoomCode } from './net/invite.js'
 
 // Lista de salas abiertas + crear una sala nueva.
 export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
@@ -9,12 +10,23 @@ export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
   const [roomName, setRoomName] = useState(`Sala de ${name || 'Jugador'}`)
   const [mode, setMode] = useState('2v2')
   const [variant, setVariant] = useState('futsal')
+  const [isPrivate, setIsPrivate] = useState(false)
+  const [code, setCode] = useState('')
+  const [codeError, setCodeError] = useState('')
 
   useEffect(() => watchRooms(setRooms), [])
 
   const create = (e) => {
     e.preventDefault()
-    onCreate({ name: roomName, mode, variant })
+    onCreate({ name: roomName, mode, variant, isPrivate })
+  }
+
+  const joinByCode = (e) => {
+    e.preventDefault()
+    const id = parseRoomCode(code)
+    if (!id) return setCodeError('Pegá un link de invitación o un código de sala')
+    setCodeError('')
+    onJoin(id)
   }
 
   return (
@@ -56,11 +68,23 @@ export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
                 ))}
               </div>
             </div>
+            <label className="check">
+              <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+              Sala privada (solo se entra con el link)
+            </label>
             <button className="play" type="submit" disabled={busy}>
               {busy ? 'Creando…' : 'Crear y entrar'}
             </button>
           </form>
         )}
+
+        <form className="join-code" onSubmit={joinByCode}>
+          <input value={code} placeholder="Pegá un link de invitación o un código" onChange={(e) => setCode(e.target.value)} />
+          <button type="submit" className="small" disabled={busy}>
+            {busy ? '…' : 'Entrar'}
+          </button>
+        </form>
+        {codeError && <div className="error">{codeError}</div>}
 
         <div className="room-list">
           {rooms.length === 0 && <p className="empty">No hay salas abiertas. ¡Creá una!</p>}

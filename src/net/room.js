@@ -43,7 +43,7 @@ export function buildMatchRoster(room) {
 
 // ---------------------------------------------------------------- host
 
-export function createRoomHost({ name, hostName, mode, variant }) {
+export function createRoomHost({ name, hostName, mode, variant, isPrivate = false }) {
   const events = createEmitter()
   const room = {
     id: clientId,
@@ -52,6 +52,7 @@ export function createRoomHost({ name, hostName, mode, variant }) {
     mode,
     variant,
     fillBots: true,
+    private: !!isPrivate, // privada: no aparece en la lista, solo se entra con el link
     started: false,
     createdAt: Date.now(),
     players: [{ id: clientId, name: cleanName(hostName), team: 'red' }],
@@ -72,7 +73,8 @@ export function createRoomHost({ name, hostName, mode, variant }) {
     if (closed) return
     const snapshot = publicRoom()
     for (const c of conns.values()) c.sendReliable({ t: 'lobby', room: snapshot })
-    advertiseRoom({
+    if (room.private) stopAdvertising()
+    else advertiseRoom({
       id: room.id,
       name: room.name,
       host: room.players.find((p) => p.id === room.hostId)?.name,
@@ -172,6 +174,7 @@ export function createRoomHost({ name, hostName, mode, variant }) {
       }
       if (patch.variant) room.variant = patch.variant
       if (typeof patch.fillBots === 'boolean') room.fillBots = patch.fillBots
+      if (typeof patch.private === 'boolean') room.private = patch.private
       if (typeof patch.name === 'string') room.name = cleanText(patch.name) || room.name
       changed()
     },

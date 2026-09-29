@@ -5,14 +5,18 @@ import RoomLobby from './RoomLobby.jsx'
 import { FIELDS, VARIANTS } from './game/constants.js'
 import { onlineAvailable } from './net/supabase.js'
 import { createRoomHost, joinRoom } from './net/room.js'
+import { roomCodeFromUrl, setUrlRoom } from './net/invite.js'
 
 // Solo en desarrollo: ?play=3v3&variant=fulbo arranca el partido directo (útil para probar).
 const devParams = import.meta.env.DEV ? new URLSearchParams(location.search) : new URLSearchParams()
 const devPlay = devParams.get('play')
 const devVariant = devParams.get('variant')
 
+// ?sala=<código>: te invitaron a una sala
+const invitedRoom = roomCodeFromUrl()
+
 export default function App() {
-  const [screen, setScreen] = useState(devPlay in FIELDS ? 'game' : 'menu')
+  const [screen, setScreen] = useState(devPlay in FIELDS ? 'game' : invitedRoom && onlineAvailable ? 'invite' : 'menu')
   const [mode, setMode] = useState(devPlay in FIELDS ? devPlay : '1v1')
   const [variant, setVariant] = useState(() => devVariant || (localStorage.getItem('picadito:variant') === 'fulbo' ? 'fulbo' : 'futsal'))
   const [team, setTeam] = useState('red')
@@ -27,6 +31,9 @@ export default function App() {
   const [chat, setChat] = useState([])
   const [netError, setNetError] = useState('')
   const [busy, setBusy] = useState(false)
+  // mientras estás en una sala, la URL es su link de invitación
+  useEffect(() => setUrlRoom(session ? session.getRoom()?.id : null), [session])
+
   const online = useMemo(() => (session && onlineMatch ? { session, match: onlineMatch } : null), [session, onlineMatch])
 
   useEffect(() => {
@@ -97,6 +104,40 @@ export default function App() {
     // host: Esc termina el partido para todos · cliente: Esc vuelve al menú de la sala
     const exit = () => (session.isHost ? session.endMatch() : setScreen('room'))
     return <Game view3d={view3d} relativeMove={relativeMove} online={online} onExit={exit} />
+  }
+
+  if (screen === 'invite') {
+    const accept = (e) => {
+      e.preventDefault()
+      localStorage.setItem('picadito:name', name.trim())
+      setScreen('rooms')
+      enterRoom(invitedRoom)
+    }
+    return (
+      <div className="screen">
+        <form className="menu" onSubmit={accept}>
+          <h1>Picadito</h1>
+          <p className="invite-title">Te invitaron a una sala</p>
+          <label className="field">
+            <span>Tu nombre</span>
+            <input autoFocus value={name} maxLength={14} placeholder="Jugador" onChange={(e) => setName(e.target.value)} />
+          </label>
+          <button className="play" type="submit">
+            Entrar a la sala
+          </button>
+          <button
+            type="button"
+            className="online"
+            onClick={() => {
+              setUrlRoom(null)
+              setScreen('menu')
+            }}
+          >
+            Ir al menú
+          </button>
+        </form>
+      </div>
+    )
   }
 
   if (screen === 'rooms') {

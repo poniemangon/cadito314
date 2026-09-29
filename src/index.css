@@ -406,3 +406,55 @@ button.kick {
   opacity: 0.75;
   margin: 4px 0;
 }
+
+/* ---------------- invitaciones */
+.invite {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(94, 224, 122, 0.12);
+  border: 1px solid rgba(94, 224, 122, 0.35);
+}
+
+.invite-text {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.invite-text span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.invite-text code {
+  font-size: 12px;
+  opacity: 0.75;
+  word-break: break-all;
+}
+
+.join-code {
+  display: flex;
+  gap: 8px;
+}
+
+.join-code input {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+}
+
+.invite-title {
+  margin: 0;
+  text-align: center;
+  font-size: 18px;
+  opacity: 0.85;
+}

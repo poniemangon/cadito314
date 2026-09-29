@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FIELDS, VARIANTS, TEAM_NAMES } from './game/constants.js'
+import { inviteUrl } from './net/invite.js'
 
 const TEAMS = [
   { key: 'red', label: TEAM_NAMES.red },
@@ -11,6 +12,7 @@ const TEAMS = [
 export default function RoomLobby({ session, chat, onLeave, onWatch }) {
   const [room, setRoom] = useState(() => session.getRoom())
   const [text, setText] = useState('')
+  const [copied, setCopied] = useState('')
   const chatRef = useRef(null)
   const isHost = session.isHost
   const me = session.localId
@@ -24,6 +26,17 @@ export default function RoomLobby({ session, chat, onLeave, onWatch }) {
   const perTeam = FIELDS[room.mode].perTeam
   const inTeam = (team) => room.players.filter((p) => p.team === team)
   const myTeam = room.players.find((p) => p.id === me)?.team
+
+  const link = inviteUrl(room.id)
+  const copy = async (value, what) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(what)
+      setTimeout(() => setCopied(''), 1800)
+    } catch {
+      window.prompt('Copiá el link:', value)
+    }
+  }
 
   const send = (e) => {
     e.preventDefault()
@@ -40,6 +53,19 @@ export default function RoomLobby({ session, chat, onLeave, onWatch }) {
           </button>
           <h2>{room.name}</h2>
           <span className="tag">{isHost ? 'Sos el host' : 'Invitado'}</span>
+        </div>
+
+        <div className="invite">
+          <div className="invite-text">
+            <span>Invitá a tus amigos</span>
+            <code>{link}</code>
+          </div>
+          <button type="button" className="small" onClick={() => copy(link, 'link')}>
+            {copied === 'link' ? '¡Copiado!' : 'Copiar link'}
+          </button>
+          <button type="button" className="small" onClick={() => copy(room.id, 'code')}>
+            {copied === 'code' ? '¡Copiado!' : `Código: ${room.id}`}
+          </button>
         </div>
 
         <div className="settings">
@@ -83,6 +109,15 @@ export default function RoomLobby({ session, chat, onLeave, onWatch }) {
               onChange={(e) => session.setSettings({ fillBots: e.target.checked })}
             />
             Completar los lugares libres con bots
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={!!room.private}
+              disabled={!isHost}
+              onChange={(e) => session.setSettings({ private: e.target.checked })}
+            />
+            Sala privada (no aparece en la lista, solo se entra con el link)
           </label>
         </div>
 
