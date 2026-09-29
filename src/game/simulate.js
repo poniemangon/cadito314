@@ -317,7 +317,7 @@ function slideContacts(state, p) {
   const a = p.action
   const ball = state.ball
   const speed = Math.hypot(p.vx, p.vy)
-  if (!a.hitBall && ball.z < 14 && Math.hypot(ball.x - p.x, ball.y - p.y) < PLAYER.radius + BALL.radius + TACKLE.slideBallReach) {
+  if (!a.hitBall && ball.z < BALL.radius * 1.4 && Math.hypot(ball.x - p.x, ball.y - p.y) < PLAYER.radius + BALL.radius + TACKLE.slideBallReach) {
     const owner = ball.owner ? state.players.find((q) => q.id === ball.owner) : null
     if (owner && owner !== p) owner.controlCooldown = TACKLE.victimCooldown
     ball.owner = null
@@ -431,6 +431,18 @@ function moveBall(state) {
   const damp = b.z > 0 ? rules.airDamping : rules.groundDamping
   b.vx *= damp
   b.vy *= damp
+  // rodando, además, un frenado fijo: un pase sin potencia se queda corto y la pelota se detiene
+  if (b.z === 0 && !b.owner) {
+    const sp = Math.hypot(b.vx, b.vy)
+    const next = sp - rules.rollingFriction
+    if (next <= BALL.stopSpeed) {
+      b.vx = 0
+      b.vy = 0
+    } else {
+      b.vx *= next / sp
+      b.vy *= next / sp
+    }
+  }
 }
 
 // Futsal: paredes tipo Haxball, la pelota nunca sale (rebota en las líneas a cualquier altura).

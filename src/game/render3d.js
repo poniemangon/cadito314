@@ -98,7 +98,7 @@ export function createRenderer3D(canvas, state, view = 'iso') {
     new THREE.MeshStandardMaterial({ map: makeBallTexture(), roughness: 0.45 }),
   )
   // en tercera persona la pelota se dibuja más chica (más realista); la física no cambia
-  const ballScale = tps ? 0.72 : 1
+  const ballScale = 1 // (la pelota ya tiene tamaño realista en la física)
   ball.scale.setScalar(ballScale)
   scene.add(ball)
   const ballShadow = new THREE.Mesh(

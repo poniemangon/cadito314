@@ -24,7 +24,7 @@ export const STAMINA = {
 }
 
 export const BALL = {
-  radius: 10,
+  radius: 7,
   invMass: 1,
   bCoef: 0.5,
   gravity: 0.25,
@@ -33,6 +33,7 @@ export const BALL = {
   bounce: 0.5, // rebote contra el piso
   bounceFriction: 0.92,
   minBounce: 1.2,
+  stopSpeed: 0.08, // por debajo de esto, rodando, la pelota se detiene
 }
 
 export const KICK = {
@@ -112,6 +113,7 @@ export const VARIANTS = {
     walls: true, // la pelota rebota en paredes sobre las líneas y nunca sale
     playerMargin: 0, // los jugadores quedan adentro de las paredes
     groundDamping: 0.994, // pelota más rápida (menos rozamiento)
+    rollingFriction: 0.012, // frenado fijo por tick rodando (piso liso)
     airDamping: 0.997,
     wallBounce: 0.75,
     kickMult: 1.1,
@@ -121,6 +123,7 @@ export const VARIANTS = {
     walls: false, // la pelota sale: lateral, córner, saque de arco
     playerMargin: MARGIN,
     groundDamping: 0.99,
+    rollingFriction: 0.028, // el pasto frena más
     airDamping: 0.996,
     wallBounce: 0.3, // contra los carteles de afuera
     kickMult: 1,
