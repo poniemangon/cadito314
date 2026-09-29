@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FIELDS, VARIANTS, TEAM_NAMES } from './game/constants.js'
+import { FIELDS, VARIANTS, VIEWS, TEAM_NAMES } from './game/constants.js'
 import { inviteUrl } from './net/invite.js'
 
 const TEAMS = [
@@ -79,6 +79,22 @@ export default function RoomLobby({ session, chat, onLeave, onWatch }) {
                   disabled={!isHost || room.started}
                   className={room.variant === key ? 'active' : ''}
                   onClick={() => session.setSettings({ variant: key })}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <span>Cámara</span>
+            <div className="options">
+              {Object.entries(VIEWS).map(([key, v]) => (
+                <button
+                  type="button"
+                  key={key}
+                  disabled={!isHost || room.started}
+                  className={(room.view || '3d') === key ? 'active' : ''}
+                  onClick={() => session.setSettings({ view: key })}
                 >
                   {v.label}
                 </button>

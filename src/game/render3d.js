@@ -1,16 +1,17 @@
-// Vista isométrica 3D con Three.js. Solo dibuja: la física sigue siendo simulate.js
-// (mundo 2D + altura de la pelota). Ejes: física x → X, física y → Z, altura → Y.
+// Vista 3D con Three.js (isométrica o tercera persona). Solo dibuja: la física sigue siendo
+// simulate.js (mundo 2D + altura). Ejes: física x → X, física y → Z, altura → Y.
 import * as THREE from 'three'
 import { PLAYER, BALL, STAMINA, KICK, MARGIN, VARIANTS } from './constants.js'
-import { TEAM_COLORS, drawPitch, chargeColor } from './render.js'
+import { drawPitch, chargeColor } from './render.js'
+import { makePlayerModel, animatePlayer, HEAD_TOP } from './player3d.js'
 
 const ISO_DIR = new THREE.Vector3(-1, 1, 1).normalize() // del objetivo hacia la cámara
 const CAMERA_DISTANCE = 2000
 const FIT_MAX_VIEW = 760 // si con este alto visible entra toda la cancha, se muestra entera y fija
 const FOLLOW_VIEW = 540 // si no entra, la cámara sigue a tu jugador con este zoom
-const SKIN = '#e2b088'
-const HEAD_TOP = 44
 const AIM_PLANE_HEIGHT = 20
+// Tercera persona: cámara detrás del jugador
+const TPS = { distance: 125, height: 62, lookAhead: 70, lookHeight: 22, fov: 58 }
 
 // Con la cámara en diagonal, las flechas se interpretan en coordenadas de pantalla:
 // ↑ en pantalla = (+x, -y) en la cancha, → = (+x, +y).
@@ -22,7 +23,8 @@ export function screenToWorldInput(inp) {
   return { ...inp, right: wx > 0, left: wx < 0, down: wy > 0, up: wy < 0 }
 }
 
-export function createRenderer3D(canvas, state) {
+// view: 'iso' (isométrica) | 'tps' (tercera persona)
+export function createRenderer3D(canvas, state, view = 'iso') {
   const { field } = state
   const hw = field.width / 2
   const hh = field.height / 2
@@ -35,7 +37,8 @@ export function createRenderer3D(canvas, state) {
 
   const scene = new THREE.Scene()
   scene.background = new THREE.Color('#10240f')
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 5000)
+  const tps = view === 'tps'
+  const camera = tps ? new THREE.PerspectiveCamera(TPS.fov, 1, 1, 7000) : new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 5000)
 
   // ---------------------------------------------------------------- luces
   scene.add(new THREE.HemisphereLight('#eef6ff', '#2c4a24', 1.5))
@@ -69,6 +72,12 @@ export function createRenderer3D(canvas, state) {
 
   const futsal = VARIANTS[state.variant].walls
   scene.background = new THREE.Color(futsal ? '#1c1f24' : '#10240f')
+  if (tps) {
+    // en tercera persona se ve el horizonte: cielo (o techo oscuro en futsal) y niebla a lo lejos
+    const sky = futsal ? '#1f2227' : '#9cc4ea'
+    scene.background = new THREE.Color(sky)
+    scene.fog = new THREE.Fog(sky, 1100, 3200)
+  }
   const outside = new THREE.Mesh(
     new THREE.PlaneGeometry(8000, 8000),
     new THREE.MeshStandardMaterial({ color: futsal ? '#2a2e34' : '#1f3d1d', roughness: 1 }),
@@ -80,6 +89,7 @@ export function createRenderer3D(canvas, state) {
 
   if (futsal) addGlassWalls(scene, field)
   else addBoards(scene, hw + MARGIN, hh + MARGIN)
+  if (tps) addStands(scene, hw + MARGIN + 60, hh + MARGIN + 60, futsal)
   scene.add(buildGoal(field, -1), buildGoal(field, 1))
 
   // ---------------------------------------------------------------- pelota
@@ -87,6 +97,9 @@ export function createRenderer3D(canvas, state) {
     new THREE.SphereGeometry(BALL.radius, 32, 20),
     new THREE.MeshStandardMaterial({ map: makeBallTexture(), roughness: 0.45 }),
   )
+  // en tercera persona la pelota se dibuja más chica (más realista); la física no cambia
+  const ballScale = tps ? 0.72 : 1
+  ball.scale.setScalar(ballScale)
   scene.add(ball)
   const ballShadow = new THREE.Mesh(
     new THREE.CircleGeometry(BALL.radius, 24),
@@ -120,12 +133,20 @@ export function createRenderer3D(canvas, state) {
   // ---------------------------------------------------------------- cámara
   const cam = { target: new THREE.Vector3(), ready: false, view: FOLLOW_VIEW, fits: false, w: 1, h: 1 }
   const tmp = new THREE.Vector3()
+  const focus = new THREE.Vector3()
+  const lookAt = new THREE.Vector3()
+  let lastTime = performance.now()
 
   function resize(w, h) {
     cam.w = w
     cam.h = h
     renderer.setSize(w, h, false)
     const aspect = w / h
+    if (tps) {
+      camera.aspect = aspect
+      camera.updateProjectionMatrix()
+      return
+    }
     // ¿entra toda la cancha en pantalla?
     camera.position.copy(ISO_DIR).multiplyScalar(CAMERA_DISTANCE)
     camera.lookAt(0, 0, 0)
@@ -151,50 +172,23 @@ export function createRenderer3D(canvas, state) {
     camera.updateProjectionMatrix()
   }
 
-  function update(state, localId) {
+  // opts.yaw: hacia dónde mira la cámara en tercera persona (radianes, coordenadas de cancha)
+  function update(state, localId, opts = {}) {
     const b = state.ball
+
+    const now = performance.now()
+    const dt = Math.min(0.1, (now - lastTime) / 1000)
+    lastTime = now
 
     for (const p of state.players) {
       let m = meshes.get(p.id)
       if (!m) {
-        m = makePlayer(p, p.id === localId)
+        const number = state.players.filter((q) => q.team === p.team).indexOf(p) + 1
+        m = makePlayerModel(p, number, p.id === localId)
         meshes.set(p.id, m)
-        scene.add(m.group)
+        scene.add(m.root)
       }
-      m.group.position.set(p.x, p.z || 0, p.y)
-      m.group.rotation.y = Math.atan2(-p.fy, p.fx)
-      const speed = Math.hypot(p.vx, p.vy)
-      m.phase += speed * 0.2
-      const amp = Math.min(1, speed / 2.5) * 0.75
-      const swing = Math.sin(m.phase) * amp
-      m.legs[0].rotation.z = swing
-      m.legs[1].rotation.z = -swing
-      m.arms[0].rotation.z = -swing * 0.8
-      m.arms[1].rotation.z = swing * 0.8
-      m.torso.rotation.z = p.sprinting ? -0.22 : -0.06 * amp
-      // al cargar un tiro, la pierna derecha va atrás
-      if (p.chargeType) m.legs[1].rotation.z = 0.5 + (p.charge / KICK.maxCharge) * 0.6
-      const act = p.action && p.action.type
-      if (act === 'slide') {
-        // tirado hacia atrás, piernas adelante
-        m.pose.rotation.set(0, 0, 1.2)
-        m.pose.position.y = 3
-        m.legs[0].rotation.z = 0.35
-        m.legs[1].rotation.z = 0.1
-        m.arms[0].rotation.z = m.arms[1].rotation.z = -0.8
-        m.torso.rotation.z = 0
-      } else if (act === 'fallen') {
-        m.pose.rotation.set(Math.PI / 2, 0, 0)
-        m.pose.position.y = 8
-        m.legs[0].rotation.z = m.legs[1].rotation.z = 0
-      } else if (act === 'getup' || act === 'stumble') {
-        const t = p.action.ticks / 28
-        m.pose.rotation.set(0, 0, act === 'getup' ? Math.min(1.2, t * 1.2) : -0.25)
-        m.pose.position.y = act === 'getup' ? t * 3 : 0
-      } else {
-        m.pose.rotation.set(0, 0, 0)
-        m.pose.position.y = 0
-      }
+      animatePlayer(m, p, dt)
       const owns = b.owner === p.id
       m.possRing.visible = owns
       if (owns) m.possRing.material.opacity = 0.55 + 0.3 * Math.sin(state.tick * 0.2)
@@ -218,19 +212,48 @@ export function createRenderer3D(canvas, state) {
     const dist = Math.hypot(dx, dz)
     if (dist > 0.001 && dist < 60) {
       rollAxis.set(dz, 0, -dx).normalize()
-      rollQ.setFromAxisAngle(rollAxis, dist / BALL.radius)
+      rollQ.setFromAxisAngle(rollAxis, dist / (BALL.radius * ballScale))
       ball.quaternion.premultiply(rollQ)
     }
     lastBall.x = b.x
     lastBall.y = b.y
-    ball.position.set(b.x, b.z + BALL.radius, b.y)
+    ball.position.set(b.x, b.z + BALL.radius * ballScale, b.y)
     const hk = Math.min(b.z, 200) / 200
     ballShadow.position.set(b.x, 0.4, b.y)
-    ballShadow.scale.setScalar(1 - hk * 0.45)
+    ballShadow.scale.setScalar((1 - hk * 0.45) * ballScale)
     ballShadow.material.opacity = 0.45 * (1 - hk * 0.7)
 
     // cámara
     const me = state.players.find((p) => p.id === localId)
+    if (tps) {
+      if (me) {
+        // detrás del jugador, mirando hacia donde apunta la cámara
+        const yaw = opts.yaw ?? Math.atan2(me.fy, me.fx)
+        const dx = Math.cos(yaw)
+        const dz = Math.sin(yaw)
+        tmp.set(me.x, (me.z || 0) * 0.5, me.y)
+        if (!cam.ready) {
+          focus.copy(tmp)
+          cam.ready = true
+        }
+        focus.lerp(tmp, clamp01(dt * 14))
+        camera.position.set(focus.x - dx * TPS.distance, focus.y + TPS.height, focus.z - dz * TPS.distance)
+        lookAt.set(focus.x + dx * TPS.lookAhead, focus.y + TPS.lookHeight, focus.z + dz * TPS.lookAhead)
+      } else {
+        // espectador: cámara de transmisión desde el costado, siguiendo la pelota
+        tmp.set(b.x * 0.8, 0, 0)
+        if (!cam.ready) {
+          focus.copy(tmp)
+          cam.ready = true
+        }
+        focus.lerp(tmp, clamp01(dt * 3))
+        camera.position.set(focus.x, 420, hh + MARGIN + 520)
+        lookAt.set(focus.x, 0, 0)
+      }
+      camera.lookAt(lookAt)
+      camera.updateMatrixWorld()
+      return
+    }
     if (cam.fits || !me) {
       tmp.set(cam.fits ? 0 : b.x, 0, cam.fits ? 0 : b.y)
     } else {
@@ -254,6 +277,7 @@ export function createRenderer3D(canvas, state) {
   const pv = new THREE.Vector3()
   function project(x, y, z) {
     pv.set(x, z, y).project(camera)
+    if (pv.z > 1) return null // detrás de la cámara
     return { x: ((pv.x + 1) / 2) * cam.w, y: ((1 - pv.y) / 2) * cam.h }
   }
 
@@ -295,6 +319,7 @@ export function drawLabels3D(ctx, state, localId, project) {
   for (const p of state.players) {
     const isMe = p.id === localId
     const top = project(p.x, p.y, HEAD_TOP + 4 + (p.z || 0))
+    if (!top) continue
     let y = top.y
 
     if (p.chargeType) {
@@ -317,6 +342,7 @@ export function drawLabels3D(ctx, state, localId, project) {
 
     if (isMe) {
       const feet = project(p.x, p.y, 0)
+      if (!feet) continue
       const w = 32
       const t = p.stamina / STAMINA.max
       const sy = feet.y + PLAYER.radius * 0.6 + 6
@@ -328,86 +354,9 @@ export function drawLabels3D(ctx, state, localId, project) {
   }
 }
 
-// ---------------------------------------------------------------- modelos
+// ---------------------------------------------------------------- escenario
 
-const geo = {
-  leg: new THREE.CylinderGeometry(2.6, 2.3, 10, 8).translate(0, -5, 0),
-  boot: new THREE.BoxGeometry(7, 2.6, 4.5),
-  shorts: new THREE.CylinderGeometry(9.5, 9, 5, 14),
-  body: new THREE.CylinderGeometry(8.5, 9.5, 13, 14),
-  arm: new THREE.CylinderGeometry(2.2, 2, 10, 8).translate(0, -5, 0),
-  head: new THREE.SphereGeometry(7, 16, 12),
-  hair: new THREE.SphereGeometry(7.4, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2.2),
-  ring: new THREE.RingGeometry(PLAYER.radius + 3, PLAYER.radius + 7, 36).rotateX(-Math.PI / 2),
-  meRing: new THREE.RingGeometry(PLAYER.radius - 1, PLAYER.radius + 1.5, 36).rotateX(-Math.PI / 2),
-}
-const HAIR_COLORS = ['#2b1d14', '#5a3a1e', '#111', '#8a5a2b', '#d9b25f']
-
-function makePlayer(p, isMe) {
-  const group = new THREE.Group()
-  const team = new THREE.MeshStandardMaterial({ color: TEAM_COLORS[p.team], roughness: 0.6 })
-  const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.7 })
-  const shorts = new THREE.MeshStandardMaterial({ color: '#f4f4f4', roughness: 0.7 })
-  const boots = new THREE.MeshStandardMaterial({ color: '#1a1a1a', roughness: 0.5 })
-  let hash = 0
-  for (const c of p.id) hash = (hash * 31 + c.charCodeAt(0)) >>> 0
-  const hair = new THREE.MeshStandardMaterial({ color: HAIR_COLORS[hash % HAIR_COLORS.length], roughness: 0.9 })
-
-  // "pose": todo el cuerpo, para poder acostarlo (barrida / derribado) sin tocar los anillos del piso
-  const pose = new THREE.Group()
-  group.add(pose)
-
-  const legs = []
-  for (const s of [-1, 1]) {
-    const pivot = new THREE.Group()
-    pivot.position.set(0, 10, s * 4.5)
-    const leg = new THREE.Mesh(geo.leg, skin)
-    const boot = new THREE.Mesh(geo.boot, boots)
-    boot.position.set(1.8, -10, 0)
-    pivot.add(leg, boot)
-    pose.add(pivot)
-    legs.push(pivot)
-  }
-
-  const torso = new THREE.Group()
-  torso.position.y = 10
-  pose.add(torso)
-  const sh = new THREE.Mesh(geo.shorts, shorts)
-  sh.position.y = 2.5
-  const body = new THREE.Mesh(geo.body, team)
-  body.position.y = 11.5
-  const head = new THREE.Mesh(geo.head, skin)
-  head.position.y = 25
-  const hairMesh = new THREE.Mesh(geo.hair, hair)
-  hairMesh.position.y = 25.6
-  hairMesh.rotation.z = 0.25 // un poco hacia atrás, así se ve la cara
-  torso.add(sh, body, head, hairMesh)
-
-  const arms = []
-  for (const s of [-1, 1]) {
-    const pivot = new THREE.Group()
-    pivot.position.set(0, 17, s * 10.5)
-    pivot.add(new THREE.Mesh(geo.arm, team))
-    torso.add(pivot)
-    arms.push(pivot)
-  }
-
-  group.traverse((o) => {
-    if (o.isMesh) o.castShadow = true
-  })
-
-  const possRing = new THREE.Mesh(geo.ring, new THREE.MeshBasicMaterial({ color: TEAM_COLORS[p.team], transparent: true, depthWrite: false }))
-  possRing.position.y = 0.6
-  possRing.visible = false
-  group.add(possRing)
-  if (isMe) {
-    const meRing = new THREE.Mesh(geo.meRing, new THREE.MeshBasicMaterial({ color: '#fff', transparent: true, opacity: 0.85, depthWrite: false }))
-    meRing.position.y = 0.5
-    group.add(meRing)
-  }
-
-  return { group, pose, legs, arms, torso, possRing, phase: 0 }
-}
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 function buildGoal(field, side) {
   const g = new THREE.Group()
@@ -510,6 +459,47 @@ function addGlassWalls(scene, field) {
     addPost(x, ez)
   }
   for (const sx of [-1, 1]) for (const z of [-hh, -gw, gw, hh]) addPost(sx * ex, z)
+}
+
+// Tribunas escalonadas alrededor (se ven sobre todo en tercera persona)
+function addStands(scene, ex, ez, indoor) {
+  const colors = indoor ? ['#3a3f47', '#454b54', '#4f5661'] : ['#5b6470', '#6a7480', '#7a8490']
+  const crowd = ['#e0564a', '#4a7de0', '#f2f2f2', '#f0b429', '#2bd46b', '#222']
+  const steps = 5
+  const depth = 26
+  const rise = 16
+  const add = (x, z, w, d, h, color) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: 0.9 }))
+    m.position.set(x, h / 2, z)
+    m.receiveShadow = true
+    scene.add(m)
+  }
+  for (let i = 0; i < steps; i++) {
+    const off = i * depth + depth / 2
+    const h = (i + 1) * rise
+    const col = colors[i % colors.length]
+    add(0, -ez - off, 2 * (ex + off), depth, h, col)
+    add(0, ez + off, 2 * (ex + off), depth, h, col)
+    add(-ex - off, 0, depth, 2 * ez, h, col)
+    add(ex + off, 0, depth, 2 * ez, h, col)
+  }
+  // público: cubitos de colores sobre los escalones de los costados largos
+  const personGeo = new THREE.BoxGeometry(5, 9, 5)
+  const mats = crowd.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }))
+  let seed = 7
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  for (let i = 0; i < steps; i++) {
+    const off = i * depth + depth / 2
+    const y = (i + 1) * rise + 4.5
+    for (let x = -ex; x < ex; x += 11) {
+      for (const side of [-1, 1]) {
+        if (rnd() < 0.45) continue
+        const m = new THREE.Mesh(personGeo, mats[Math.floor(rnd() * mats.length)])
+        m.position.set(x + rnd() * 5, y, side * (ez + off))
+        scene.add(m)
+      }
+    }
+  }
 }
 
 function addBoards(scene, ex, ez) {

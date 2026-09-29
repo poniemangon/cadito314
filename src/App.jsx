@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Game from './Game.jsx'
 import Rooms from './Rooms.jsx'
 import RoomLobby from './RoomLobby.jsx'
-import { FIELDS, VARIANTS } from './game/constants.js'
+import { FIELDS, VARIANTS, VIEWS } from './game/constants.js'
 import { onlineAvailable } from './net/supabase.js'
 import { createRoomHost, joinRoom } from './net/room.js'
 import { roomCodeFromUrl, setUrlRoom } from './net/invite.js'
@@ -22,7 +22,11 @@ export default function App() {
   const [team, setTeam] = useState('red')
   const [name, setName] = useState(() => localStorage.getItem('picadito:name') || '')
   const [withBots, setWithBots] = useState(true)
-  const [view3d, setView3d] = useState(() => localStorage.getItem('picadito:view') !== '2d')
+  // cámara: '3d' (isométrica) | 'tps' (tercera persona)
+  const [view, setView] = useState(() => {
+    const v = devParams.get('view') || localStorage.getItem('picadito:view')
+    return v === 'tps' ? 'tps' : '3d'
+  })
   const [relativeMove, setRelativeMove] = useState(() => localStorage.getItem('picadito:move') !== 'fixed')
 
   // --- online
@@ -97,13 +101,13 @@ export default function App() {
   }
 
   if (screen === 'game') {
-    return <Game mode={mode} variant={variant} team={team} name={name.trim()} withBots={withBots} view3d={view3d} relativeMove={relativeMove} onExit={() => setScreen('menu')} />
+    return <Game mode={mode} variant={variant} team={team} name={name.trim()} withBots={withBots} view={view} relativeMove={relativeMove} onExit={() => setScreen('menu')} />
   }
 
   if (screen === 'online' && online) {
     // host: Esc termina el partido para todos · cliente: Esc vuelve al menú de la sala
     const exit = () => (session.isHost ? session.endMatch() : setScreen('room'))
-    return <Game view3d={view3d} relativeMove={relativeMove} online={online} onExit={exit} />
+    return <Game view={online.match.view || '3d'} relativeMove={relativeMove} online={online} onExit={exit} />
   }
 
   if (screen === 'invite') {
@@ -152,14 +156,14 @@ export default function App() {
     e.preventDefault()
     localStorage.setItem('picadito:name', name.trim())
     localStorage.setItem('picadito:variant', variant)
-    localStorage.setItem('picadito:view', view3d ? '3d' : '2d')
+    localStorage.setItem('picadito:view', view)
     localStorage.setItem('picadito:move', relativeMove ? 'mouse' : 'fixed')
     setScreen('game')
   }
 
   const goOnline = () => {
     localStorage.setItem('picadito:name', name.trim())
-    localStorage.setItem('picadito:view', view3d ? '3d' : '2d')
+    localStorage.setItem('picadito:view', view)
     localStorage.setItem('picadito:move', relativeMove ? 'mouse' : 'fixed')
     setScreen('rooms')
   }
@@ -216,12 +220,11 @@ export default function App() {
       <div className="field">
         <span>Vista</span>
         <div className="options">
-          <button type="button" className={view3d ? 'active' : ''} onClick={() => setView3d(true)}>
-            Isométrica 3D
-          </button>
-          <button type="button" className={!view3d ? 'active' : ''} onClick={() => setView3d(false)}>
-            2D clásica
-          </button>
+          {Object.entries(VIEWS).map(([key, v]) => (
+            <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>
+              {v.label}
+            </button>
+          ))}
         </div>
       </div>
 

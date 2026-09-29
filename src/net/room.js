@@ -43,7 +43,7 @@ export function buildMatchRoster(room) {
 
 // ---------------------------------------------------------------- host
 
-export function createRoomHost({ name, hostName, mode, variant, isPrivate = false }) {
+export function createRoomHost({ name, hostName, mode, variant, view = '3d', isPrivate = false }) {
   const events = createEmitter()
   const room = {
     id: clientId,
@@ -51,6 +51,7 @@ export function createRoomHost({ name, hostName, mode, variant, isPrivate = fals
     hostId: clientId,
     mode,
     variant,
+    view: view === 'tps' ? 'tps' : '3d', // cámara del partido para todos
     fillBots: true,
     private: !!isPrivate, // privada: no aparece en la lista, solo se entra con el link
     started: false,
@@ -80,6 +81,7 @@ export function createRoomHost({ name, hostName, mode, variant, isPrivate = fals
       host: room.players.find((p) => p.id === room.hostId)?.name,
       mode: room.mode,
       variant: room.variant,
+      view: room.view,
       humans: room.players.filter((p) => p.team !== 'spec').length,
       max: perTeam() * 2,
       started: room.started,
@@ -173,6 +175,7 @@ export function createRoomHost({ name, hostName, mode, variant, isPrivate = fals
         }
       }
       if (patch.variant) room.variant = patch.variant
+      if (patch.view === '3d' || patch.view === 'tps') room.view = patch.view
       if (typeof patch.fillBots === 'boolean') room.fillBots = patch.fillBots
       if (typeof patch.private === 'boolean') room.private = patch.private
       if (typeof patch.name === 'string') room.name = cleanText(patch.name) || room.name
@@ -186,7 +189,7 @@ export function createRoomHost({ name, hostName, mode, variant, isPrivate = fals
     },
     startMatch() {
       if (room.started) return
-      match = { mode: room.mode, variant: room.variant, roster: buildMatchRoster(room) }
+      match = { mode: room.mode, variant: room.variant, view: room.view, roster: buildMatchRoster(room) }
       room.started = true
       for (const c of conns.values()) c.sendReliable({ t: 'start', match })
       changed()

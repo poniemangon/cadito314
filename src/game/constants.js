@@ -144,3 +144,9 @@ export const FORMATIONS = {
 }
 
 export const TEAM_NAMES = { red: 'Rojo', blue: 'Azul' }
+
+// Cámaras de juego
+export const VIEWS = {
+  '3d': { label: 'Isométrica' },
+  tps: { label: 'Tercera persona' },
+}
