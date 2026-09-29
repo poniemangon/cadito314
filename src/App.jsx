@@ -260,6 +260,8 @@ export default function App() {
         <li><kbd>Shift</kbd> correr (gasta stamina)</li>
         <li><kbd>Click izq.</kbd> rasante · <kbd>Click der.</kbd> por arriba — mantené para cargar potencia</li>
         <li>Sin la pelota, <kbd>Click izq.</kbd> = quite · mantenido = barrida</li>
+        <li><kbd>Click izq. + der.</kbd> media altura (tenso y bajo)</li>
+        <li><kbd>Alt</kbd> (mantener) postura defensiva: de frente a la pelota, tapa y amortigua tiros</li>
         <li><kbd>Espacio</kbd> saltar · en el aire <kbd>Click izq.</kbd> = cabezazo</li>
       </ul>
     </form>

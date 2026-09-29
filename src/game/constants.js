@@ -47,6 +47,11 @@ export const KICK = {
   lobMaxSpeed: 7,
   lobMinLift: 3,
   lobMaxLift: 7.5,
+  // media altura (click izq. + der.): tenso y bajo, pasa a la altura de las rodillas/cintura
+  midMinSpeed: 3.5,
+  midMaxSpeed: 8.5,
+  midMinLift: 2.6, // el impulso vertical crece con la potencia: más alto y más tiempo en el aire
+  midMaxLift: 4.7,
 }
 
 // Conducción (posesión estilo FIFA)
@@ -92,6 +97,16 @@ export const JUMP = {
   headMax: 60,
   headerSpeed: 6.5,
   headerLift: 0.8,
+}
+
+// Postura defensiva (mantener Alt), como el "jockey" del FIFA: agachado, de frente a la pelota,
+// moviéndose de costado. Cubre más y amortigua los tiros que le pegan.
+export const JOCKEY = {
+  speedFactor: 0.62, // se mueve más lento (y sin sprint)
+  turnRate: 0.35, // gira rápido para quedar de frente a la pelota
+  blockExtra: 5, // radio extra para tapar la pelota (piernas abiertas)
+  bounce: 0.08, // la pelota casi no rebota: queda amortiguada
+  blockPush: 0.9, // al taparla, la pelota queda adelante con esta velocidad (muerta)
 }
 
 export const WALL_BOUNCE = 0.5

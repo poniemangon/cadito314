@@ -23,7 +23,7 @@ export function encodeSnapshot(state) {
     p: state.players.map((p) => [
       p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.vx), r2(p.vy), r3(p.fx), r3(p.fy),
       Math.round(p.stamina), p.exhausted ? 1 : 0, p.sprinting ? 1 : 0, p.chargeType, p.charge,
-      p.action ? p.action.type : null, p.action ? p.action.ticks : 0, p.aim === null ? null : r3(p.aim),
+      p.action ? p.action.type : null, p.action ? p.action.ticks : 0, p.aim === null ? null : r3(p.aim), p.jockey ? 1 : 0,
     ]),
   }
 }
@@ -78,5 +78,6 @@ export function applySnapshot(state, to, from = null, alpha = 1) {
     p.charge = row[12]
     p.action = row[13] ? { type: row[13], ticks: row[14] } : null
     p.aim = row[15]
+    p.jockey = !!row[16]
   }
 }

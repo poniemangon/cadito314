@@ -1,7 +1,7 @@
 // Simulación pura y determinista: step(state, inputs) avanza un tick.
 // No usa Math.random ni nada del navegador, así el host online puede correr exactamente esto.
 import {
-  PLAYER, STAMINA, BALL, KICK, CONTROL, TACKLE, FIELDS, FORMATIONS, MARGIN, POST_RADIUS,
+  PLAYER, STAMINA, BALL, KICK, CONTROL, TACKLE, JOCKEY, FIELDS, FORMATIONS, MARGIN, POST_RADIUS,
   JUMP, NET_BOUNCE, POST_BOUNCE, MATCH_TICKS, GOAL_PAUSE_TICKS, OUT_PAUSE_TICKS, SETPIECE_RADIUS, VARIANTS,
 } from './constants.js'
 
@@ -49,6 +49,7 @@ export function createMatch(mode, roster, variant = 'futsal') {
       tackleCooldown: 0,
       action: null, // { type: 'slide' | 'fallen' | 'getup' | 'stumble', ticks, ... }
       aim: null,
+      jockey: false,
     })),
     ball: { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, owner: null, inNet: false },
     events: [],
@@ -130,9 +131,22 @@ export function step(state, inputs) {
       // la pelota choca con el cuerpo si está a su altura (saltando, el cuerpo sube)
       if (ball.z >= p.z + PLAYER.height || ball.z + 2 * BALL.radius <= p.z) continue
       if (p.action && p.action.type === 'fallen') continue // tirado en el piso, la pelota pasa
-      // el que la conduce no la hace rebotar: la lleva pegada
-      const e = ball.owner === p.id ? 0 : PLAYER.bCoef * BALL.bCoef
-      if (collideCircles(p, PLAYER.radius, PLAYER.invMass, ball, BALL.radius, BALL.invMass, e)) {
+      // el que la conduce no la hace rebotar: la lleva pegada; en postura defensiva, la amortigua
+      const e = ball.owner === p.id ? 0 : p.jockey ? JOCKEY.bounce : PLAYER.bCoef * BALL.bCoef
+      const r = PLAYER.radius + (p.jockey ? JOCKEY.blockExtra : 0)
+      const pvx = p.vx
+      const pvy = p.vy
+      if (collideCircles(p, r, PLAYER.invMass, ball, BALL.radius, BALL.invMass, e)) {
+        if (p.jockey && ball.owner !== p.id) {
+          // bloqueo: el jugador queda firme y la pelota queda muerta adelante suyo
+          const dx = ball.x - p.x
+          const dy = ball.y - p.y
+          const d = Math.hypot(dx, dy) || 1
+          ball.vx = pvx * 0.5 + (dx / d) * JOCKEY.blockPush
+          ball.vy = pvy * 0.5 + (dy / d) * JOCKEY.blockPush
+          p.vx = pvx * 0.85
+          p.vy = pvy * 0.85
+        }
         touch(state, p)
       }
     }
@@ -156,6 +170,7 @@ function handleInput(state, p, inp) {
     p.charge = 0
     p.pending = null
     p.sprinting = false
+    p.jockey = false
     p.prevShoot = inp.shoot
     p.prevLob = inp.lob
     p.prevJump = inp.jump
@@ -185,7 +200,16 @@ function handleInput(state, p, inp) {
     }
   }
   const moving = ax !== 0 || ay !== 0
-  if (moving) {
+  // Alt: postura defensiva (en el piso). Queda de frente a la pelota y se mueve de costado.
+  p.jockey = !!inp.jockey && p.z === 0 && p.vz <= 0
+  if (p.jockey) {
+    const cur = Math.atan2(p.fy, p.fx)
+    let diff = Math.atan2(state.ball.y - p.y, state.ball.x - p.x) - cur
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff))
+    const a = cur + clamp(diff, -JOCKEY.turnRate, JOCKEY.turnRate)
+    p.fx = Math.cos(a)
+    p.fy = Math.sin(a)
+  } else if (moving) {
     // el cuerpo gira de a poco hacia donde vas (así hay ángulos intermedios, no solo 8)
     const cur = Math.atan2(p.fy, p.fx)
     let diff = Math.atan2(ay, ax) - cur
@@ -198,7 +222,7 @@ function handleInput(state, p, inp) {
   p.aim = typeof inp.aim === 'number' && Number.isFinite(inp.aim) ? inp.aim : null
 
   // Sprint + stamina
-  const sprint = inp.sprint && moving && !p.exhausted && p.stamina > 0
+  const sprint = inp.sprint && moving && !p.jockey && !p.exhausted && p.stamina > 0
   if (sprint) {
     p.stamina = Math.max(0, p.stamina - STAMINA.drain)
     if (p.stamina === 0) p.exhausted = true
@@ -212,6 +236,7 @@ function handleInput(state, p, inp) {
   let acc = sprint ? PLAYER.sprintAccel : PLAYER.accel
   if (state.ball.owner === p.id) acc *= PLAYER.dribbleFactor
   if (airborne) acc *= JUMP.airControl
+  if (p.jockey) acc *= JOCKEY.speedFactor
   // si querés ir contra tu inercia, frena más fuerte (cambios de dirección más ágiles)
   if (p.vx * ax + p.vy * ay < 0) acc *= PLAYER.brakeBoost
   p.vx += ax * acc
@@ -240,13 +265,16 @@ function handleInput(state, p, inp) {
     return
   }
 
-  // Carga de potencia: mantener Z (rasante) o X (globo), soltar para patear
+  // Carga de potencia: mantener click izq. (rasante), der. (globo) o los dos (media altura); soltar para patear
   if (!p.chargeType) {
-    if (inp.shoot && !p.prevShoot) p.chargeType = 'ground'
+    if (inp.shoot && inp.lob) p.chargeType = 'mid'
+    else if (inp.shoot && !p.prevShoot) p.chargeType = 'ground'
     else if (inp.lob && !p.prevLob) p.chargeType = 'lob'
+  } else if (p.chargeType !== 'mid' && inp.shoot && inp.lob) {
+    p.chargeType = 'mid' // apretaste el otro botón mientras cargabas: pasa a media altura (conserva la carga)
   }
   if (p.chargeType) {
-    const held = p.chargeType === 'ground' ? inp.shoot : inp.lob
+    const held = p.chargeType === 'mid' ? inp.shoot || inp.lob : p.chargeType === 'ground' ? inp.shoot : inp.lob
     if (held) {
       p.charge = Math.min(KICK.maxCharge, p.charge + 1)
     } else {
@@ -386,7 +414,12 @@ function kickBall(state, p, type, power, aim) {
   dy /= len
 
   const mult = VARIANTS[state.variant].kickMult
-  if (type === 'lob') {
+  if (type === 'mid') {
+    const h = (KICK.midMinSpeed + (KICK.midMaxSpeed - KICK.midMinSpeed) * power) * mult
+    ball.vx = p.vx * 0.4 + dx * h
+    ball.vy = p.vy * 0.4 + dy * h
+    ball.vz = KICK.midMinLift + (KICK.midMaxLift - KICK.midMinLift) * power
+  } else if (type === 'lob') {
     const h = (KICK.lobMinSpeed + (KICK.lobMaxSpeed - KICK.lobMinSpeed) * power) * mult
     ball.vx = p.vx * 0.4 + dx * h
     ball.vy = p.vy * 0.4 + dy * h

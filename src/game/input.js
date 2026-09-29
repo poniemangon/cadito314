@@ -1,18 +1,23 @@
 // Teclado + mouse → input del jugador local.
 // WASD (o flechas): mover · Shift: correr · Mouse: apuntar
 // Click izq.: rasante (con la pelota) / quite (sin la pelota) / barrida (sin la pelota, mantenido)
-// Click der.: por arriba · Mantener cualquiera carga la potencia.
-// Espacio: saltar · Click izq. en el aire: cabezazo
-const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'Space'])
+// Click der.: por arriba · Los dos a la vez: media altura · Mantener carga la potencia.
+// Espacio: saltar · Click izq. en el aire: cabezazo · Alt: postura defensiva
+const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'Space', 'AltLeft', 'AltRight'])
 
 export function createKeyboard() {
   const down = new Set()
   const buttons = new Set()
   const onDown = (e) => {
-    if (GAME_KEYS.has(e.code)) e.preventDefault()
+    // Alt (defender) + otra tecla: bloquear los atajos del navegador (Alt+D, Alt+F…)
+    if (GAME_KEYS.has(e.code) || e.altKey) e.preventDefault()
     down.add(e.code)
   }
-  const onUp = (e) => down.delete(e.code)
+  const onUp = (e) => {
+    // soltar Alt solo no tiene que activar el menú del navegador
+    if (e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault()
+    down.delete(e.code)
+  }
   const onMouseDown = (e) => {
     e.preventDefault()
     buttons.add(e.button)
@@ -49,6 +54,7 @@ export function createKeyboard() {
         shoot: buttons.has(0),
         lob: buttons.has(2),
         jump: down.has('Space'),
+        jockey: down.has('AltLeft') || down.has('AltRight'),
       }
     },
     dispose() {

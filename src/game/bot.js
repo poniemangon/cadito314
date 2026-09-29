@@ -9,7 +9,7 @@ export function createBrain() {
 }
 
 export function botInput(state, me, brain) {
-  const input = { up: false, down: false, left: false, right: false, sprint: false, shoot: false, lob: false, jump: false }
+  const input = { up: false, down: false, left: false, right: false, sprint: false, shoot: false, lob: false, jump: false, jockey: false }
   if (state.phase === 'ended') return input
 
   const { field, ball } = state
@@ -137,6 +137,10 @@ export function botInput(state, me, brain) {
     if (brain.charging.ticks-- > 0) input[brain.charging.key] = true
     else brain.charging = null // soltar = patear
   }
+
+  // un rival viene con la pelota: postura defensiva para cerrarle el paso
+  const rivalOwner = ball.owner && state.players.find((p) => p.id === ball.owner && p.team !== me.team)
+  if (rivalOwner && dBall > 28 && dBall < 90 && !brain.charging) input.jockey = true
 
   steer(me, tx, ty, input)
   return input

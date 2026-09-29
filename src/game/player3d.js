@@ -247,6 +247,20 @@ export function animatePlayer(m, p, dt) {
     m.torso.rotation.z = -0.1
   }
 
+  // postura defensiva (Alt): agachado, piernas flexionadas y abiertas, brazos afuera; pasitos cortos
+  if (p.jockey && !(p.z > 0.5)) {
+    const step = Math.sin(m.phase * 1.4) * 0.18 * Math.min(1, speed / 1.5)
+    m.hips.position.y = HIP_H - 4.2
+    L.hip.rotation.set(0.28, 0, 0.35 + step)
+    R.hip.rotation.set(-0.28, 0, 0.35 - step)
+    L.knee.rotation.z = R.knee.rotation.z = -0.85
+    AL.sh.rotation.set(0.75, 0, 0.25)
+    AR.sh.rotation.set(-0.75, 0, 0.25)
+    AL.elbow.rotation.z = AR.elbow.rotation.z = 0.7
+    m.torso.rotation.set(0, 0, -0.38)
+    m.headG.rotation.set(0, 0, 0.3) // mirando la pelota
+  }
+
   // barrida, caído, levantándose
   const act = p.action && p.action.type
   if (act === 'slide') {
