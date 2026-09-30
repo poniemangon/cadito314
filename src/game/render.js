@@ -6,6 +6,11 @@ export const TEAM_COLORS = { red: '#e0564a', blue: '#4a7de0' }
 // Color de la barra de potencia: amarillo rasante, naranja globo, rojo si soltando ahora sería barrida
 export function chargeColor(p, state) {
   if (!p.chargeType) return null
+  if (p.chargeType === 'kick') {
+    // amarillo = por abajo; cuanto más altura, más naranja
+    const t = Math.min(1, (p.lift || 0) * 1.4)
+    return `rgb(255, ${Math.round(225 - t * 66)}, ${Math.round(77 - t * 49)})`
+  }
   if (p.chargeType === 'lob') return '#ff9f1c'
   if (p.chargeType === 'mid') return '#5fd8ff'
   if (state.ball.owner !== p.id && p.charge >= TACKLE.slideThreshold) return '#ff3b3b'
@@ -297,7 +302,7 @@ function drawPlayer(ctx, p, isMe, state) {
   ctx.restore()
 }
 
-export function drawHud(ctx, state, view, localId, endHint = 'R: revancha  ·  Esc: menú') {
+export function drawHud(ctx, state, view, localId, endHint = 'R: revancha  ·  Esc: menú', showHelp = true) {
   const cx = view.w / 2
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -357,10 +362,11 @@ export function drawHud(ctx, state, view, localId, endHint = 'R: revancha  ·  E
     banner(ctx, cx, view.h / 2 + 64, endHint, 'rgba(255,255,255,0.8)', 16)
   }
 
+  if (!showHelp) return
   ctx.textAlign = 'left'
   ctx.font = '500 12px system-ui, sans-serif'
   ctx.fillStyle = 'rgba(255,255,255,0.55)'
-  ctx.fillText('WASD: mover · Mouse: apuntar · Shift: correr · Click izq.: rasante / quite / barrida · Click der.: por arriba · Izq.+Der.: media altura · Alt: defender · Espacio: saltar (click izq. en el aire: cabezazo) · Esc: salir', 12, view.h - 14)
+  ctx.fillText('Mouse: moverte (mira lejos = correr) · Click izq.: patear (mantené = potencia, subí la mira = altura; sin la pelota: barrida) · Click der.: cubrir · Esc: salir', 12, view.h - 14)
 }
 
 const RESTART_NAMES = { lateral: 'Lateral', corner: 'Córner', goalkick: 'Saque de arco' }

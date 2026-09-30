@@ -1,7 +1,7 @@
 // Simulación pura y determinista: step(state, inputs) avanza un tick.
 // No usa Math.random ni nada del navegador, así el host online puede correr exactamente esto.
 import {
-  PLAYER, STAMINA, BALL, KICK, CONTROL, TACKLE, JOCKEY, FIELDS, FORMATIONS, MARGIN, POST_RADIUS,
+  PLAYER, STAMINA, BALL, KICK, CONTROL, TACKLE, JOCKEY, MOVE, FIELDS, FORMATIONS, MARGIN, POST_RADIUS,
   JUMP, NET_BOUNCE, POST_BOUNCE, MATCH_TICKS, GOAL_PAUSE_TICKS, OUT_PAUSE_TICKS, SETPIECE_RADIUS, VARIANTS,
 } from './constants.js'
 
@@ -50,6 +50,8 @@ export function createMatch(mode, roster, variant = 'futsal') {
       action: null, // { type: 'slide' | 'fallen' | 'getup' | 'stumble', ticks, ... }
       aim: null,
       jockey: false,
+      shielding: false, // cubriendo la pelota (click der. con la pelota)
+      lift: 0, // altura elegida para el tiro que está cargando (0..1)
     })),
     ball: { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, owner: null, inNet: false },
     events: [],
@@ -171,6 +173,8 @@ function handleInput(state, p, inp) {
     p.pending = null
     p.sprinting = false
     p.jockey = false
+    p.shielding = false
+    p.lift = 0
     p.prevShoot = inp.shoot
     p.prevLob = inp.lob
     p.prevJump = inp.jump
@@ -178,31 +182,28 @@ function handleInput(state, p, inp) {
     return
   }
 
-  let ax
-  let ay
+  // Movimiento: vector (mx, my) cuyo largo (0..1) es la intensidad: poco = caminar despacio, 1 = correr.
+  // Sale de la distancia de la mira al jugador (o de cuánto empujás el joystick en el celular).
+  let ax = 0
+  let ay = 0
+  let mag = 0
   if (Number.isFinite(inp.mx) && Number.isFinite(inp.my)) {
-    // dirección analógica (movimiento relativo al mouse, o un joystick más adelante)
-    ax = inp.mx
-    ay = inp.my
-    const len = Math.hypot(ax, ay)
-    if (len > 1) {
-      ax /= len
-      ay /= len
-    } else if (len < 0.05) {
-      ax = ay = 0
-    }
-  } else {
-    ax = (inp.right ? 1 : 0) - (inp.left ? 1 : 0)
-    ay = (inp.down ? 1 : 0) - (inp.up ? 1 : 0)
-    if (ax && ay) {
-      ax *= Math.SQRT1_2
-      ay *= Math.SQRT1_2
+    const len = Math.hypot(inp.mx, inp.my)
+    if (len >= 0.05) {
+      ax = inp.mx / len
+      ay = inp.my / len
+      mag = Math.min(1, len)
     }
   }
-  const moving = ax !== 0 || ay !== 0
-  // Alt: postura defensiva (en el piso). Queda de frente a la pelota y se mueve de costado.
-  p.jockey = !!inp.jockey && p.z === 0 && p.vz <= 0
+  const moving = mag > 0
+  const owner = state.ball.owner === p.id
+
+  // Cubrir (click der.): con la pelota, la protegés con el cuerpo; sin la pelota, postura defensiva
+  const cover = !!inp.cover && p.z === 0 && p.vz <= 0
+  p.shielding = cover && owner
+  p.jockey = cover && !owner
   if (p.jockey) {
+    // de frente a la pelota, moviéndose de costado
     const cur = Math.atan2(p.fy, p.fx)
     let diff = Math.atan2(state.ball.y - p.y, state.ball.x - p.x) - cur
     diff = Math.atan2(Math.sin(diff), Math.cos(diff))
@@ -210,7 +211,7 @@ function handleInput(state, p, inp) {
     p.fx = Math.cos(a)
     p.fy = Math.sin(a)
   } else if (moving) {
-    // el cuerpo gira de a poco hacia donde vas (así hay ángulos intermedios, no solo 8)
+    // el cuerpo gira de a poco hacia donde vas
     const cur = Math.atan2(p.fy, p.fx)
     let diff = Math.atan2(ay, ax) - cur
     diff = Math.atan2(Math.sin(diff), Math.cos(diff))
@@ -218,11 +219,11 @@ function handleInput(state, p, inp) {
     p.fx = Math.cos(a)
     p.fy = Math.sin(a)
   }
-  // apuntar en 360° (mouse): ángulo en radianes en coordenadas de la cancha, o null
+  // apuntar en 360°: ángulo en radianes en coordenadas de la cancha, o null
   p.aim = typeof inp.aim === 'number' && Number.isFinite(inp.aim) ? inp.aim : null
 
-  // Sprint + stamina
-  const sprint = inp.sprint && moving && !p.jockey && !p.exhausted && p.stamina > 0
+  // Sprint: mira lejos (o joystick a fondo)
+  const sprint = mag >= MOVE.sprintAt && !cover && !p.exhausted && p.stamina > 0
   if (sprint) {
     p.stamina = Math.max(0, p.stamina - STAMINA.drain)
     if (p.stamina === 0) p.exhausted = true
@@ -232,74 +233,48 @@ function handleInput(state, p, inp) {
   }
   p.sprinting = sprint
 
-  const airborne = p.z > 0 || p.vz > 0
-  let acc = sprint ? PLAYER.sprintAccel : PLAYER.accel
-  if (state.ball.owner === p.id) acc *= PLAYER.dribbleFactor
-  if (airborne) acc *= JUMP.airControl
+  // caminando, la velocidad depende de qué tan lejos está la mira
+  let acc = sprint ? PLAYER.sprintAccel : PLAYER.accel * clamp(mag / MOVE.sprintAt, MOVE.minMag, 1)
+  if (owner) acc *= PLAYER.dribbleFactor
   if (p.jockey) acc *= JOCKEY.speedFactor
+  if (p.shielding) acc *= JOCKEY.shieldSpeed
   // si querés ir contra tu inercia, frena más fuerte (cambios de dirección más ágiles)
   if (p.vx * ax + p.vy * ay < 0) acc *= PLAYER.brakeBoost
   p.vx += ax * acc
   p.vy += ay * acc
 
-  // Salto: Espacio (si estabas cargando un tiro, se cancela)
-  const jumpPressed = inp.jump && !p.prevJump
-  p.prevJump = inp.jump
-  if (airborne || jumpPressed) {
-    if (!airborne) {
-      p.vz = JUMP.speed
-      p.headed = false
-      p.stamina = Math.max(0, p.stamina - JUMP.staminaCost)
-      if (state.ball.owner === p.id) state.ball.owner = null
-      p.controlCooldown = Math.max(p.controlCooldown, 10)
-      state.events.push({ type: 'jump', by: p.id })
-    } else if (inp.shoot && !p.prevShoot && !p.headed) {
-      // en el aire, click izq. = intento de cabezazo (hay que timearlo)
-      p.headerWindow = JUMP.headerWindow
-    }
-    p.chargeType = null
-    p.charge = 0
-    p.pending = null
-    p.prevShoot = inp.shoot
-    p.prevLob = inp.lob
-    return
-  }
-
-  // Carga de potencia: mantener click izq. (rasante), der. (globo) o los dos (media altura); soltar para patear
-  if (!p.chargeType) {
-    if (inp.shoot && inp.lob) p.chargeType = 'mid'
-    else if (inp.shoot && !p.prevShoot) p.chargeType = 'ground'
-    else if (inp.lob && !p.prevLob) p.chargeType = 'lob'
-  } else if (p.chargeType !== 'mid' && inp.shoot && inp.lob) {
-    p.chargeType = 'mid' // apretaste el otro botón mientras cargabas: pasa a media altura (conserva la carga)
-  }
+  // Patear (click izq.): un toque = pase por abajo; mantener = más potencia;
+  // subir la mira mientras cargás (inp.lift, 0..1) = más altura. Sin la pelota: barrida.
+  if (!p.chargeType && inp.shoot && !p.prevShoot) p.chargeType = 'kick'
   if (p.chargeType) {
-    const held = p.chargeType === 'mid' ? inp.shoot || inp.lob : p.chargeType === 'ground' ? inp.shoot : inp.lob
-    if (held) {
+    p.lift = clamp(Number(inp.lift) || 0, 0, 1)
+    if (inp.shoot) {
       p.charge = Math.min(KICK.maxCharge, p.charge + 1)
     } else {
-      const type = p.chargeType
       const charge = p.charge
       const power = Math.max(1, charge) / KICK.maxCharge
+      const lift = p.lift
       p.chargeType = null
       p.charge = 0
+      p.lift = 0
       const ball = state.ball
-      const hasBall = ball.owner === p.id || (!ball.owner && inReach(p, ball))
-      if (type === 'ground' && !hasBall) {
-        // Z sin la pelota: toque = quite parado, cargado = barrida
-        if (charge < TACKLE.slideThreshold) standingTackle(state, p)
-        else startSlide(p, (charge - TACKLE.slideThreshold) / (KICK.maxCharge - TACKLE.slideThreshold))
+      const dist = Math.hypot(ball.x - p.x, ball.y - p.y) - PLAYER.radius - BALL.radius
+      const ballComing = ball.z <= KICK.maxHeight && dist <= KICK.reach + KICK.firstTimeWindow
+      if (owner || ballComing) {
+        // le pega ya, o apenas llegue (de primera)
+        p.pending = { power, lift, ticks: KICK.buffer, aim: p.aim }
       } else {
-        p.pending = { type, power, ticks: KICK.buffer, aim: p.aim }
+        startSlide(p, charge / KICK.maxCharge)
       }
     }
+  } else {
+    p.lift = 0
   }
   p.prevShoot = inp.shoot
-  p.prevLob = inp.lob
 
   if (p.pending) {
     if (state.ball.owner === p.id || inReach(p, state.ball)) {
-      kickBall(state, p, p.pending.type, p.pending.power, p.aim ?? p.pending.aim)
+      kickBall(state, p, p.pending.power, p.pending.lift, p.aim ?? p.pending.aim)
       p.pending = null
     } else if (--p.pending.ticks <= 0) {
       p.pending = null
@@ -395,14 +370,14 @@ function inReach(p, ball) {
   return d - PLAYER.radius - BALL.radius <= KICK.reach && ball.z <= KICK.maxHeight
 }
 
-function kickBall(state, p, type, power, aim) {
+// Velocidad inicial de la pelota para una patada (se usa para patear y para dibujar la trayectoria)
+export function kickLaunch(state, p, power, lift, aim) {
   const ball = state.ball
   let dx, dy
   if (aim !== null && aim !== undefined) {
     dx = Math.cos(aim)
     dy = Math.sin(aim)
   } else if (ball.owner === p.id) {
-    // con la pelota dominada se patea hacia donde mirás
     dx = p.fx
     dy = p.fy
   } else {
@@ -412,24 +387,70 @@ function kickBall(state, p, type, power, aim) {
   const len = Math.hypot(dx, dy) || 1
   dx /= len
   dy /= len
-
   const mult = VARIANTS[state.variant].kickMult
-  if (type === 'mid') {
-    const h = (KICK.midMinSpeed + (KICK.midMaxSpeed - KICK.midMinSpeed) * power) * mult
-    ball.vx = p.vx * 0.4 + dx * h
-    ball.vy = p.vy * 0.4 + dy * h
-    ball.vz = KICK.midMinLift + (KICK.midMaxLift - KICK.midMinLift) * power
-  } else if (type === 'lob') {
-    const h = (KICK.lobMinSpeed + (KICK.lobMaxSpeed - KICK.lobMinSpeed) * power) * mult
-    ball.vx = p.vx * 0.4 + dx * h
-    ball.vy = p.vy * 0.4 + dy * h
-    ball.vz = KICK.lobMinLift + (KICK.lobMaxLift - KICK.lobMinLift) * power
-  } else {
-    const s = (KICK.groundMin + (KICK.groundMax - KICK.groundMin) * power) * mult
-    ball.vx = p.vx * 0.4 + dx * s
-    ball.vy = p.vy * 0.4 + dy * s
-    ball.vz *= 0.3
+  // por abajo es más rápida; cuanto más alto, más se parece a un globo
+  const ground = KICK.groundMin + (KICK.groundMax - KICK.groundMin) * power
+  const lob = KICK.lobMinSpeed + (KICK.lobMaxSpeed - KICK.lobMinSpeed) * power
+  const h = (ground + (lob - ground) * lift) * mult
+  return {
+    vx: p.vx * 0.4 + dx * h,
+    vy: p.vy * 0.4 + dy * h,
+    vz: lift > 0.03 ? lift * KICK.liftMax * (0.55 + 0.45 * power) : null, // null = rasante
   }
+}
+
+// Trayectoria prevista de una patada (puntos x, y, z), para dibujar la curva mientras cargás
+export function predictKick(state, p, power, lift, aim, steps = 120) {
+  const rules = VARIANTS[state.variant]
+  const ball = state.ball
+  const near = Math.hypot(ball.x - p.x, ball.y - p.y) - PLAYER.radius - BALL.radius <= KICK.reach + KICK.firstTimeWindow
+  const v = kickLaunch(state, p, power, lift, aim)
+  const sp = Math.hypot(v.vx - p.vx * 0.4, v.vy - p.vy * 0.4) || 1
+  const ux = (v.vx - p.vx * 0.4) / sp
+  const uy = (v.vy - p.vy * 0.4) / sp
+  const b = near
+    ? { x: ball.x, y: ball.y, z: ball.z, vx: v.vx, vy: v.vy, vz: v.vz ?? 0 }
+    : { x: p.x + ux * (PLAYER.radius + BALL.radius), y: p.y + uy * (PLAYER.radius + BALL.radius), z: 0, vx: v.vx, vy: v.vy, vz: v.vz ?? 0 }
+  const pts = []
+  let bounces = 0
+  for (let i = 0; i < steps; i++) {
+    if (b.z > 0 || b.vz > 0) b.vz -= BALL.gravity
+    b.x += b.vx
+    b.y += b.vy
+    b.z += b.vz
+    if (b.z <= 0) {
+      b.z = 0
+      if (b.vz < -BALL.minBounce) {
+        b.vz = -b.vz * BALL.bounce
+        b.vx *= BALL.bounceFriction
+        b.vy *= BALL.bounceFriction
+        if (++bounces > 1) break
+      } else b.vz = 0
+    }
+    const damp = b.z > 0 ? rules.airDamping : rules.groundDamping
+    b.vx *= damp
+    b.vy *= damp
+    if (b.z === 0) {
+      const s = Math.hypot(b.vx, b.vy)
+      const next = s - rules.rollingFriction
+      if (next <= BALL.stopSpeed) break
+      b.vx *= next / s
+      b.vy *= next / s
+    }
+    // en futsal la pelota rebota en las paredes: la curva termina ahí
+    if (rules.walls && (Math.abs(b.y) + BALL.radius > state.field.height / 2 || Math.abs(b.x) + BALL.radius > state.field.width / 2)) break
+    pts.push({ x: b.x, y: b.y, z: b.z })
+  }
+  return pts
+}
+
+function kickBall(state, p, power, lift, aim) {
+  const ball = state.ball
+  const v = kickLaunch(state, p, power, lift, aim)
+  ball.vx = v.vx
+  ball.vy = v.vy
+  ball.vz = v.vz === null ? ball.vz * 0.3 : v.vz
+  const type = v.vz === null ? 'ground' : lift < 0.45 ? 'mid' : 'lob'
   ball.owner = null
   p.controlCooldown = CONTROL.cooldown
   touch(state, p)
@@ -595,7 +616,8 @@ function updatePossession(state) {
     bestDist = d
   }
 
-  if (best && (!owner || bestDist + CONTROL.stealMargin < ownerDist)) {
+  const margin = CONTROL.stealMargin + (owner && owner.shielding ? JOCKEY.shieldMargin : 0)
+  if (best && (!owner || bestDist + margin < ownerDist)) {
     if (owner) owner.controlCooldown = CONTROL.cooldown // al que se la roban no la recupera al instante
     owner = best
     state.events.push({ type: 'possession', by: best.id })

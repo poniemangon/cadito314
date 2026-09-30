@@ -1,15 +1,16 @@
-// IA simple para rellenar equipos. Devuelve el mismo formato de input que el teclado,
-// así la simulación no distingue bots de humanos.
-import { PLAYER, BALL, KICK, JUMP } from './constants.js'
+// IA simple para rellenar equipos. Devuelve el mismo formato de input que un humano
+// ({ mx, my, aim, shoot, lift, cover }), así la simulación no distingue bots de humanos.
+import { PLAYER, BALL, KICK } from './constants.js'
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 
 export function createBrain() {
-  return { charging: null, aimY: 0, aimTimer: 0 }
+  return { charging: null, lift: 0, aimY: 0, aimTimer: 0 }
 }
 
 export function botInput(state, me, brain) {
-  const input = { up: false, down: false, left: false, right: false, sprint: false, shoot: false, lob: false, jump: false, jockey: false }
+  const input = { mx: 0, my: 0, shoot: false, lift: 0, cover: false }
+  let run = false // correr (sprint)
   if (state.phase === 'ended') return input
 
   const { field, ball } = state
@@ -68,12 +69,14 @@ export function botInput(state, me, brain) {
     const pressure = state.players.some((p) => p.team !== me.team && Math.hypot(p.x - me.x, p.y - me.y) < 55)
     if (!brain.charging) {
       if (dGoal < field.width * 0.33 && facing > 0.85) {
-        brain.charging = { key: 'shoot', ticks: 15 + Math.random() * 30 }
+        // remate: casi siempre por abajo, a veces a media altura
+        brain.charging = { ticks: 15 + Math.random() * 30, lift: Math.random() < 0.3 ? 0.15 + Math.random() * 0.2 : 0 }
       } else if (pressure && dGoal > field.width * 0.45 && Math.random() < 0.04) {
-        brain.charging = { key: 'lob', ticks: 15 + Math.random() * 25 }
+        brain.charging = { ticks: 15 + Math.random() * 25, lift: 0.55 + Math.random() * 0.35 } // globo
       }
     }
-    input.sprint = !pressure && dGoal > 200 && me.stamina > 45
+    run = !pressure && dGoal > 200 && me.stamina > 45
+    input.cover = pressure && dGoal > field.width * 0.5 && !brain.charging // cubrirla si lo aprietan lejos del arco
   } else if (chaser === me && !waitingKickoff) {
     // ir a buscarla, anticipando hacia dónde va
     const k = Math.min(dBall / 3, 25)
@@ -81,18 +84,16 @@ export function botInput(state, me, brain) {
     ty = ball.y + ball.vy * k
     // entrar desde el lado de tu propio arco
     tx -= atk * (PLAYER.radius + BALL.radius) * 0.5
-    input.sprint = dBall > 110 && me.stamina > 30
+    run = dBall > 110 && me.stamina > 30
     // pelota suelta cerca y bien orientado: le pega de primera
     const reach = PLAYER.radius + BALL.radius + KICK.reach
-    // (carga corta: si la pelota se escapa, termina en quite y no en barrida)
     if (!brain.charging && dBall < reach && ball.z < KICK.maxHeight && (ball.x - me.x) * atk > 0 && Math.random() < 0.15) {
-      brain.charging = { key: ballNearOwnGoal ? 'lob' : 'shoot', ticks: 3 + Math.random() * 7 }
+      brain.charging = { ticks: 3 + Math.random() * 7, lift: ballNearOwnGoal ? 0.5 : 0 } // cerca de su arco, la revienta para arriba
     }
-    // la tiene un rival: quite si está pegado, barrida de vez en cuando si está a unos metros
+    // la tiene un rival a unos metros: de vez en cuando se tira a barrer
     const rivalHasIt = ball.owner && state.players.some((p) => p.id === ball.owner && p.team !== me.team)
-    if (rivalHasIt && !brain.charging && me.tackleCooldown === 0) {
-      if (dBall < 34 && Math.random() < 0.06) brain.charging = { key: 'shoot', ticks: 2, tackle: true }
-      else if (dBall > 45 && dBall < 75 && Math.random() < 0.012) brain.charging = { key: 'shoot', ticks: 16 + Math.random() * 20, tackle: true }
+    if (rivalHasIt && !brain.charging && dBall > 45 && dBall < 75 && Math.random() < 0.012) {
+      brain.charging = { ticks: 16 + Math.random() * 20, tackle: true, lift: 0 }
     }
   } else if (hasKeeper && idx === 0) {
     tx = ownX + atk * (PLAYER.radius + 12)
@@ -109,52 +110,33 @@ export function botInput(state, me, brain) {
     ty = lane * hh * 0.4
   }
 
-  // salto y cabezazo: pelota alta bajando cerca → saltar, y cabecear cuando llega a la cabeza
-  const airborne = me.z > 0 || me.vz > 0
-  if (airborne) {
-    brain.charging = null
-    const rel = ball.z + BALL.radius - me.z
-    const near = dBall - PLAYER.radius - BALL.radius < JUMP.headerReach
-    brain.headerPress = !brain.headerPress && near && rel > JUMP.headMin && rel < JUMP.headMax
-    input.shoot = brain.headerPress
-    input.aim = Math.atan2(brain.aimY - me.y, goalX - me.x)
-    steer(me, tx, ty, input)
-    return input
-  }
-  if (!waitingKickoff && ball.z > 22 && ball.z < 70 && ball.vz < 0 && dBall < 45 && Math.random() < 0.25) {
-    brain.charging = null
-    input.jump = true
-    steer(me, tx, ty, input)
-    return input
-  }
-
   if (brain.charging) {
     // apunta al arco (con un poco de error para que no sean perfectos)
     if (brain.charging.aimError === undefined) brain.charging.aimError = (Math.random() * 2 - 1) * 0.15
     input.aim = brain.charging.tackle
       ? Math.atan2(ball.y + ball.vy * 8 - me.y, ball.x + ball.vx * 8 - me.x) // barrida: hacia donde va a estar la pelota
       : Math.atan2(brain.aimY - ball.y, goalX - ball.x) + brain.charging.aimError
-    if (brain.charging.ticks-- > 0) input[brain.charging.key] = true
+    brain.lift = brain.charging.lift || 0
+    if (brain.charging.ticks-- > 0) input.shoot = true
     else brain.charging = null // soltar = patear
   }
 
   // un rival viene con la pelota: postura defensiva para cerrarle el paso
   const rivalOwner = ball.owner && state.players.find((p) => p.id === ball.owner && p.team !== me.team)
-  if (rivalOwner && dBall > 28 && dBall < 90 && !brain.charging) input.jockey = true
+  if (rivalOwner && dBall > 28 && dBall < 90 && !brain.charging) input.cover = true
+  input.lift = brain.lift // (se manda también en el tick en que suelta, que es cuando se usa)
 
-  steer(me, tx, ty, input)
+  steer(me, tx, ty, input, run)
   return input
 }
 
-function steer(me, tx, ty, input) {
+// Moverse hacia (tx, ty): intensidad 1 = correr, 0.85 = caminar rápido
+function steer(me, tx, ty, input, run) {
   const dx = tx - me.x
   const dy = ty - me.y
   const d = Math.hypot(dx, dy)
   if (d < 6) return
-  const nx = dx / d
-  const ny = dy / d
-  input.right = nx > 0.38
-  input.left = nx < -0.38
-  input.down = ny > 0.38
-  input.up = ny < -0.38
+  const mag = run ? 1 : 0.85
+  input.mx = (dx / d) * mag
+  input.my = (dy / d) * mag
 }

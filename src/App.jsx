@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Game from './Game.jsx'
 import Rooms from './Rooms.jsx'
 import RoomLobby from './RoomLobby.jsx'
-import { FIELDS, VARIANTS, VIEWS } from './game/constants.js'
+import { FIELDS, VARIANTS } from './game/constants.js'
 import { onlineAvailable } from './net/supabase.js'
 import { createRoomHost, joinRoom } from './net/room.js'
 import { roomCodeFromUrl, setUrlRoom } from './net/invite.js'
@@ -22,12 +22,6 @@ export default function App() {
   const [team, setTeam] = useState('red')
   const [name, setName] = useState(() => localStorage.getItem('picadito:name') || '')
   const [withBots, setWithBots] = useState(true)
-  // cámara: '3d' (isométrica) | 'tps' (tercera persona)
-  const [view, setView] = useState(() => {
-    const v = devParams.get('view') || localStorage.getItem('picadito:view')
-    return v === 'tps' ? 'tps' : '3d'
-  })
-  const [relativeMove, setRelativeMove] = useState(() => localStorage.getItem('picadito:move') !== 'fixed')
 
   // --- online
   const [session, setSession] = useState(null) // host o cliente (net/room.js)
@@ -101,13 +95,13 @@ export default function App() {
   }
 
   if (screen === 'game') {
-    return <Game mode={mode} variant={variant} team={team} name={name.trim()} withBots={withBots} view={view} relativeMove={relativeMove} onExit={() => setScreen('menu')} />
+    return <Game mode={mode} variant={variant} team={team} name={name.trim()} withBots={withBots} onExit={() => setScreen('menu')} />
   }
 
   if (screen === 'online' && online) {
     // host: Esc termina el partido para todos · cliente: Esc vuelve al menú de la sala
     const exit = () => (session.isHost ? session.endMatch() : setScreen('room'))
-    return <Game view={online.match.view || '3d'} relativeMove={relativeMove} online={online} onExit={exit} />
+    return <Game online={online} onExit={exit} />
   }
 
   if (screen === 'invite') {
@@ -156,15 +150,11 @@ export default function App() {
     e.preventDefault()
     localStorage.setItem('picadito:name', name.trim())
     localStorage.setItem('picadito:variant', variant)
-    localStorage.setItem('picadito:view', view)
-    localStorage.setItem('picadito:move', relativeMove ? 'mouse' : 'fixed')
     setScreen('game')
   }
 
   const goOnline = () => {
     localStorage.setItem('picadito:name', name.trim())
-    localStorage.setItem('picadito:view', view)
-    localStorage.setItem('picadito:move', relativeMove ? 'mouse' : 'fixed')
     setScreen('rooms')
   }
 
@@ -217,34 +207,6 @@ export default function App() {
         </div>
       </div>
 
-      <div className="field">
-        <span>Vista</span>
-        <div className="options">
-          {Object.entries(VIEWS).map(([key, v]) => (
-            <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>
-              {v.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="field">
-        <span>Movimiento</span>
-        <div className="options">
-          <button type="button" className={relativeMove ? 'active' : ''} onClick={() => setRelativeMove(true)}>
-            Hacia el mouse
-          </button>
-          <button type="button" className={!relativeMove ? 'active' : ''} onClick={() => setRelativeMove(false)}>
-            Fijo
-          </button>
-        </div>
-        <small className="hint">
-          {relativeMove
-            ? 'W corre hacia el cursor. S, A y D mueven fijo según la pantalla.'
-            : 'W/A/S/D mueven siempre en la misma dirección de la pantalla.'}
-        </small>
-      </div>
-
       <label className="check">
         <input type="checkbox" checked={withBots} onChange={(e) => setWithBots(e.target.checked)} />
         Completar equipos con bots
@@ -256,13 +218,12 @@ export default function App() {
       </button>
 
       <ul className="controls">
-        <li><kbd>WASD</kbd> mover · <kbd>Mouse</kbd> apuntar (360°)</li>
-        <li><kbd>Shift</kbd> correr (gasta stamina)</li>
-        <li><kbd>Click izq.</kbd> rasante · <kbd>Click der.</kbd> por arriba — mantené para cargar potencia</li>
-        <li>Sin la pelota, <kbd>Click izq.</kbd> = quite · mantenido = barrida</li>
-        <li><kbd>Click izq. + der.</kbd> media altura (tenso y bajo)</li>
-        <li><kbd>Alt</kbd> (mantener) postura defensiva: de frente a la pelota, tapa y amortigua tiros</li>
-        <li><kbd>Espacio</kbd> saltar · en el aire <kbd>Click izq.</kbd> = cabezazo</li>
+        <li><kbd>Mouse</kbd> te movés hacia la mira: cerca caminás, lejos corrés (gasta stamina)</li>
+        <li><kbd>Click izq.</kbd> patear: un toque = pase por abajo · mantené = más fuerte</li>
+        <li>Mientras mantenés, subí la mira para darle altura (la curva te muestra el tiro)</li>
+        <li>Sin la pelota, <kbd>Click izq.</kbd> = barrida</li>
+        <li><kbd>Click der.</kbd> cubrir: con la pelota la protegés · sin la pelota, postura defensiva</li>
+        <li>Celular: joystick a la izquierda, <em>Patear</em> y <em>Cubrir</em> abajo a la derecha</li>
       </ul>
     </form>
     </div>

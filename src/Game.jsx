@@ -1,17 +1,21 @@
 import { useEffect, useRef } from 'react'
-import { FIELDS, DT } from './game/constants.js'
-import { createMatch, step } from './game/simulate.js'
+import { FIELDS, DT, MOVE, KICK } from './game/constants.js'
+import { createMatch, step, predictKick } from './game/simulate.js'
 import { createBrain, botInput } from './game/bot.js'
-import { createKeyboard } from './game/input.js'
-import { render, updateCamera, drawHud, screenToWorld } from './game/render.js'
-import { createRenderer3D, drawLabels3D, screenToWorldInput } from './game/render3d.js'
+import { createMouseButtons } from './game/input.js'
+import { drawHud } from './game/render.js'
+import { createRenderer3D, drawLabels3D } from './game/render3d.js'
 import { encodeSnapshot, applySnapshot } from './net/snapshot.js'
 
 const BOT_NAMES = ['Tito', 'Pipa', 'Chino', 'Cholo', 'Beto', 'Lalo', 'Nacho', 'Tucu', 'Ruso', 'Flaco']
 const OFFLINE_ID = 'me'
-const AIM_DEADZONE = 24 // unidades de cancha alrededor del jugador donde el cursor no cambia la dirección
+const AIM_DEADZONE = 12 // unidades de cancha alrededor del jugador donde la mira no cambia la dirección
 const SNAPSHOT_EVERY = 2 // el host manda el estado cada 2 ticks (30 por segundo)
-const TPS_SENSITIVITY = 0.0032 // radianes por píxel de mouse en tercera persona
+const LIFT_PIXELS = 170 // cuánto hay que subir la mira (en píxeles) para la altura máxima
+const JOY_DEADZONE = 0.15
+
+// ¿Pantalla táctil? (celular / tablet): joystick y botones en pantalla
+const isTouch = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches
 
 // En tu equipo los bots van primero, así vos quedás en el puesto más adelantado (no de arquero).
 function buildRoster(mode, team, name, withBots) {
@@ -42,14 +46,14 @@ function createBackgroundTicker(fn) {
 }
 
 // online: null (offline) · { session, match } (session = host o cliente de net/room.js)
-// view: '3d' (isométrica) | 'tps' (tercera persona) | '2d'
-export default function Game({ mode, variant, team, name, withBots, view = '3d', relativeMove, online, onExit }) {
-  const view3d = view !== '2d'
-  const viewMode = view // (dentro del efecto, `view` es el tamaño de pantalla)
+export default function Game({ mode, variant, team, name, withBots, online, onExit }) {
   const glRef = useRef(null)
   const hudRef = useRef(null)
   const onExitRef = useRef(onExit)
   onExitRef.current = onExit
+  // estado de los controles táctiles (lo escriben los handlers de abajo, lo lee el loop del juego)
+  const touch = useRef({ jx: 0, jy: 0, kick: false, kickY: 0, cover: false })
+  const knobRef = useRef(null)
 
   useEffect(() => {
     const hudCanvas = hudRef.current
@@ -68,12 +72,12 @@ export default function Game({ mode, variant, team, name, withBots, view = '3d',
       return brains.get(id)
     }
 
-    const tps = viewMode === 'tps'
-    const r3d = view3d ? createRenderer3D(glRef.current, state, tps ? 'tps' : 'iso') : null
-    const cam2d = { x: 0, y: 0, scale: 1, ready: false }
-    const keyboard = createKeyboard()
+    const r3d = createRenderer3D(glRef.current, state, 'iso')
+    const mouseButtons = createMouseButtons()
     const view = { w: 0, h: 0 }
-    const endHint = !session ? 'R: revancha  ·  Esc: menú' : isClient ? 'Esperando al host  ·  Esc: volver a la sala' : 'R: revancha  ·  Esc: volver a la sala'
+    const endHint = isTouch
+      ? isClient ? 'Esperando al host' : ''
+      : !session ? 'R: revancha  ·  Esc: menú' : isClient ? 'Esperando al host  ·  Esc: volver a la sala' : 'R: revancha  ·  Esc: volver a la sala'
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1
@@ -82,12 +86,12 @@ export default function Game({ mode, variant, team, name, withBots, view = '3d',
       hudCanvas.width = view.w * dpr
       hudCanvas.height = view.h * dpr
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      if (r3d) r3d.resize(view.w, view.h)
+      r3d.resize(view.w, view.h)
     }
     resize()
     window.addEventListener('resize', resize)
 
-    // mouse para apuntar en 360°
+    // la mira es el mouse
     const mouse = { x: 0, y: 0, active: false }
     const onMouseMove = (e) => {
       mouse.x = e.clientX
@@ -96,77 +100,71 @@ export default function Game({ mode, variant, team, name, withBots, view = '3d',
     }
     window.addEventListener('mousemove', onMouseMove)
 
-    // Tercera persona: la cámara gira con el mouse (se captura con un click, Esc lo suelta)
-    const startMe = state.players.find((p) => p.id === localId)
-    let camYaw = startMe && startMe.team === 'blue' ? Math.PI : 0
-    let unlockedAt = 0
-    const locked = () => document.pointerLockElement === hudCanvas
-    const onLookMove = (e) => {
-      if (tps && locked()) camYaw += e.movementX * TPS_SENSITIVITY
-    }
-    const onCanvasDown = (e) => {
-      if (tps && !locked()) {
-        e.stopPropagation() // este click solo captura el mouse, no patea
-        hudCanvas.requestPointerLock()
-      }
-    }
-    const onLockChange = () => {
-      if (!locked()) unlockedAt = performance.now()
-    }
-    document.addEventListener('mousemove', onLookMove)
-    hudCanvas.addEventListener('mousedown', onCanvasDown)
-    document.addEventListener('pointerlockchange', onLockChange)
-
-    // Último ángulo válido: si el cursor queda encima del jugador, se mantiene (evita que tiemble).
+    // Carga del tiro: al apretar, la dirección queda fija donde apuntabas; subir la mira agrega altura
+    const charge = { active: false, startY: 0, anchor: null, aim: null, lift: 0, ticks: 0 }
     let lastAim = null
-    const readLocalInput = () => {
-      const raw = keyboard.read()
-      if (tps) {
-        // W adelante (hacia donde mira la cámara), S atrás, A/D de costado; el tiro sale hacia la cámara
-        let fwd = (raw.up ? 1 : 0) - (raw.down ? 1 : 0)
-        let side = (raw.right ? 1 : 0) - (raw.left ? 1 : 0)
-        if (fwd && side) {
-          fwd *= Math.SQRT1_2
-          side *= Math.SQRT1_2
-        }
-        const c = Math.cos(camYaw)
-        const s = Math.sin(camYaw)
-        return { ...raw, aim: camYaw, mx: fwd * c - side * s, my: fwd * s + side * c }
-      }
-      const me = state.players.find((p) => p.id === localId)
-      if (mouse.active && me) {
-        const pt = r3d ? r3d.screenToGround(mouse.x, mouse.y) : screenToWorld(cam2d, view, mouse.x, mouse.y)
-        if (pt && Math.hypot(pt.x - me.x, pt.y - me.y) > AIM_DEADZONE) lastAim = Math.atan2(pt.y - me.y, pt.x - me.x)
-      }
-      if (lastAim === null) return r3d ? screenToWorldInput(raw) : raw
 
-      const inp = { ...raw, aim: lastAim }
-      if (relativeMove) {
-        // W = hacia el cursor. S, A y D son fijos según la pantalla (abajo, izquierda, derecha).
-        const sx = (raw.right ? 1 : 0) - (raw.left ? 1 : 0)
-        const sy = raw.down ? 1 : 0
-        // en isométrico, "abajo/izquierda/derecha de la pantalla" son diagonales de la cancha
-        let mx = r3d ? (sx - sy) * Math.SQRT1_2 : sx
-        let my = r3d ? (sx + sy) * Math.SQRT1_2 : sy
-        if (raw.up) {
-          mx += Math.cos(lastAim)
-          my += Math.sin(lastAim)
-        }
-        const len = Math.hypot(mx, my)
-        inp.mx = len > 0.01 ? mx / len : 0
-        inp.my = len > 0.01 ? my / len : 0
-        return inp
+    const readLocalInput = () => {
+      const me = state.players.find((p) => p.id === localId)
+      const btn = mouseButtons.read()
+      const t = touch.current
+      const kick = btn.kick || t.kick
+      const cover = btn.cover || t.cover
+      const pointerY = t.kick ? t.kickY : mouse.y
+
+      if (kick && !charge.active) {
+        charge.active = true
+        charge.ticks = 0
+        charge.startY = pointerY
+        charge.aim = lastAim
+        charge.anchor = !t.kick && mouse.active ? r3d.screenToGround(mouse.x, mouse.y) : null
+      } else if (!kick && charge.active) {
+        charge.active = false // (charge.lift se manda igual en este tick: es cuando se patea)
       }
-      return r3d ? screenToWorldInput(inp) : inp
+      if (charge.active) {
+        charge.ticks++
+        charge.lift = Math.max(0, Math.min(1, (charge.startY - pointerY) / LIFT_PIXELS))
+      }
+      if (!me) return {}
+
+      let mx = 0
+      let my = 0
+      const jmag = Math.min(1, Math.hypot(t.jx, t.jy))
+      if (isTouch) {
+        // joystick: misma lógica que la mira (dirección + cuánto lo empujás = velocidad).
+        // En isométrico, derecha en pantalla = (+x, +y) en la cancha; abajo = (-x, +y).
+        if (jmag > JOY_DEADZONE) {
+          const wx = (t.jx - t.jy) * Math.SQRT1_2
+          const wy = (t.jx + t.jy) * Math.SQRT1_2
+          const wl = Math.hypot(wx, wy)
+          const mag = jmag >= 0.92 ? 1 : MOVE.minMag + (0.9 - MOVE.minMag) * ((jmag - JOY_DEADZONE) / (0.92 - JOY_DEADZONE))
+          mx = (wx / wl) * mag
+          my = (wy / wl) * mag
+          if (!charge.active) lastAim = Math.atan2(wy, wx)
+        }
+        if (charge.active && charge.aim !== null) lastAim = charge.aim
+      } else if (mouse.active) {
+        // hacia la mira; mientras cargás, hacia el punto donde hiciste click
+        const pt = charge.active && charge.anchor ? charge.anchor : r3d.screenToGround(mouse.x, mouse.y)
+        if (pt) {
+          const dx = pt.x - me.x
+          const dy = pt.y - me.y
+          const d = Math.hypot(dx, dy)
+          if (d > AIM_DEADZONE) lastAim = Math.atan2(dy, dx)
+          let mag = 0
+          if (d >= MOVE.sprintDist) mag = 1
+          else if (d > MOVE.stopDist) mag = MOVE.minMag + (0.9 - MOVE.minMag) * ((d - MOVE.stopDist) / (MOVE.sprintDist - MOVE.stopDist))
+          if (mag > 0) {
+            mx = (dx / d) * mag
+            my = (dy / d) * mag
+          }
+        }
+      }
+      return { mx, my, aim: lastAim, shoot: kick, lift: charge.lift, cover }
     }
 
     const onKey = (e) => {
-      if (e.code === 'Escape') {
-        // en tercera persona, el primer Esc solo suelta el mouse
-        if (locked()) return document.exitPointerLock()
-        if (performance.now() - unlockedAt < 300) return
-        onExitRef.current()
-      }
+      if (e.code === 'Escape') onExitRef.current()
       if (e.code === 'KeyR' && !isClient && state.phase === 'ended') {
         state = createMatch(matchMode, roster, matchVariant)
         brains = new Map()
@@ -217,33 +215,50 @@ export default function Game({ mode, variant, team, name, withBots, view = '3d',
       hasSnapshot = true
     }
 
+    // Curva del tiro mientras cargás (se levanta a medida que subís la mira)
+    const drawTrajectory = () => {
+      const me = state.players.find((p) => p.id === localId)
+      if (!me || !charge.active || state.phase === 'ended') return
+      const power = Math.min(1, Math.max(1, charge.ticks) / KICK.maxCharge)
+      const pts = predictKick(state, me, power, charge.lift, lastAim)
+      ctx.save()
+      ctx.fillStyle = charge.lift > 0.03 ? '#ff9f1c' : '#ffe14d'
+      for (let i = 0; i < pts.length; i += 3) {
+        const s = r3d.project(pts[i].x, pts[i].y, pts[i].z)
+        if (!s) continue
+        ctx.globalAlpha = 0.9 - (i / pts.length) * 0.6
+        ctx.beginPath()
+        ctx.arc(s.x, s.y, 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      // dónde pica por primera vez
+      const land = pts.find((p, i) => i > 2 && p.z === 0)
+      if (land) {
+        const s = r3d.project(land.x, land.y, 0)
+        if (s) {
+          ctx.globalAlpha = 0.9
+          ctx.strokeStyle = ctx.fillStyle
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.ellipse(s.x, s.y, 9, 5, 0, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+      }
+      ctx.restore()
+    }
+
     let raf
     const frame = () => {
       pump()
       if (isClient) applyRemote()
       if (import.meta.env.DEV) window.__state = state
 
-      if (r3d) {
-        r3d.update(state, localId, { yaw: camYaw })
-        r3d.render()
-        ctx.clearRect(0, 0, view.w, view.h)
-        drawLabels3D(ctx, state, localId, r3d.project)
-        drawHud(ctx, state, view, localId, endHint)
-      } else {
-        updateCamera(cam2d, state, view, localId)
-        render(ctx, state, cam2d, view, localId, endHint)
-      }
-      if (tps && !locked() && state.phase !== 'ended') {
-        ctx.fillStyle = 'rgba(0,0,0,0.55)'
-        ctx.beginPath()
-        ctx.roundRect(view.w / 2 - 190, view.h - 150, 380, 38, 10)
-        ctx.fill()
-        ctx.fillStyle = '#fff'
-        ctx.font = '600 15px system-ui, sans-serif'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText('Hacé click para mover la cámara con el mouse', view.w / 2, view.h - 131)
-      }
+      r3d.update(state, localId)
+      r3d.render()
+      ctx.clearRect(0, 0, view.w, view.h)
+      drawTrajectory()
+      drawLabels3D(ctx, state, localId, r3d.project)
+      drawHud(ctx, state, view, localId, endHint, !isTouch)
       if (isClient && !hasSnapshot) {
         ctx.fillStyle = 'rgba(0,0,0,0.6)'
         ctx.fillRect(0, 0, view.w, view.h)
@@ -259,22 +274,81 @@ export default function Game({ mode, variant, team, name, withBots, view = '3d',
     return () => {
       cancelAnimationFrame(raf)
       stopTicker()
-      keyboard.dispose()
-      if (r3d) r3d.dispose()
+      mouseButtons.dispose()
+      r3d.dispose()
       window.removeEventListener('resize', resize)
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mousemove', onLookMove)
-      hudCanvas.removeEventListener('mousedown', onCanvasDown)
-      document.removeEventListener('pointerlockchange', onLockChange)
-      if (locked()) document.exitPointerLock()
     }
-  }, [mode, variant, team, name, withBots, view, relativeMove, online])
+  }, [mode, variant, team, name, withBots, online])
+
+  // --- controles táctiles
+  const joyDown = (e) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    joyMove(e)
+  }
+  const joyMove = (e) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    const r = e.currentTarget.getBoundingClientRect()
+    const radius = r.width / 2
+    let dx = (e.clientX - (r.left + radius)) / radius
+    let dy = (e.clientY - (r.top + radius)) / radius
+    const len = Math.hypot(dx, dy)
+    if (len > 1) {
+      dx /= len
+      dy /= len
+    }
+    touch.current.jx = dx
+    touch.current.jy = dy
+    if (knobRef.current) knobRef.current.style.transform = `translate(${dx * radius * 0.6}px, ${dy * radius * 0.6}px)`
+  }
+  const joyUp = () => {
+    touch.current.jx = 0
+    touch.current.jy = 0
+    if (knobRef.current) knobRef.current.style.transform = ''
+  }
+  const btnHandlers = (key) => ({
+    onPointerDown: (e) => {
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      touch.current[key] = true
+      if (key === 'kick') touch.current.kickY = e.clientY
+    },
+    onPointerMove: (e) => {
+      if (key === 'kick' && touch.current.kick) touch.current.kickY = e.clientY
+    },
+    onPointerUp: () => {
+      touch.current[key] = false
+    },
+    onPointerCancel: () => {
+      touch.current[key] = false
+    },
+  })
 
   return (
     <div className="game">
-      {view3d && <canvas ref={glRef} className="game-canvas" />}
+      <canvas ref={glRef} className="game-canvas" />
       <canvas ref={hudRef} className="game-canvas hud" />
+      {isTouch && (
+        <div className="touch">
+          <button type="button" className="touch-exit" onClick={() => onExitRef.current()}>
+            ✕
+          </button>
+          <div className="joystick" onPointerDown={joyDown} onPointerMove={joyMove} onPointerUp={joyUp} onPointerCancel={joyUp}>
+            <div className="joystick-knob" ref={knobRef} />
+          </div>
+          <div className="touch-buttons">
+            <div className="touch-btn cover" {...btnHandlers('cover')}>
+              Cubrir
+            </div>
+            <div className="touch-btn kick" {...btnHandlers('kick')}>
+              Patear
+              <small>deslizá ↑ = altura</small>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -248,7 +248,7 @@ export function animatePlayer(m, p, dt) {
   }
 
   // postura defensiva (Alt): agachado, piernas flexionadas y abiertas, brazos afuera; pasitos cortos
-  if (p.jockey && !(p.z > 0.5)) {
+  if ((p.jockey || p.shielding) && !(p.z > 0.5)) {
     const step = Math.sin(m.phase * 1.4) * 0.18 * Math.min(1, speed / 1.5)
     m.hips.position.y = HIP_H - 4.2
     L.hip.rotation.set(0.28, 0, 0.35 + step)

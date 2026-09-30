@@ -15,6 +15,14 @@ export const PLAYER = {
   bCoef: 0.5,
 }
 
+// Movimiento con la mira (o el joystick): la intensidad (0..1) sale de la distancia de la mira al jugador
+export const MOVE = {
+  stopDist: 22, // mira más cerca que esto: quieto
+  sprintDist: 170, // mira más lejos que esto: corre (sprint)
+  minMag: 0.3, // intensidad mínima al empezar a caminar
+  sprintAt: 0.95, // intensidad desde la que se corre
+}
+
 export const STAMINA = {
   max: 100,
   drain: 0.45, // por tick corriendo (~3.7 s de sprint)
@@ -47,6 +55,7 @@ export const KICK = {
   lobMaxSpeed: 7,
   lobMinLift: 3,
   lobMaxLift: 7.5,
+  liftMax: 8, // impulso vertical máximo al subir la mira del todo (con potencia máxima)
   // media altura (click izq. + der.): tenso y bajo, pasa a la altura de las rodillas/cintura
   midMinSpeed: 3.5,
   midMaxSpeed: 8.5,
@@ -106,6 +115,8 @@ export const JOCKEY = {
   turnRate: 0.35, // gira rápido para quedar de frente a la pelota
   blockExtra: 5, // radio extra para tapar la pelota (piernas abiertas)
   bounce: 0.08, // la pelota casi no rebota: queda amortiguada
+  shieldSpeed: 0.72, // cubriendo la pelota vas más lento
+  shieldMargin: 14, // y al rival le cuesta más sacártela (tiene que estar bastante más cerca)
   blockPush: 0.9, // al taparla, la pelota queda adelante con esta velocidad (muerta)
 }
 

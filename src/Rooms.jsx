@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FIELDS, VARIANTS, VIEWS } from './game/constants.js'
+import { FIELDS, VARIANTS } from './game/constants.js'
 import { watchRooms } from './net/lobby.js'
 import { parseRoomCode } from './net/invite.js'
 
@@ -10,7 +10,6 @@ export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
   const [roomName, setRoomName] = useState(`Sala de ${name || 'Jugador'}`)
   const [mode, setMode] = useState('2v2')
   const [variant, setVariant] = useState('futsal')
-  const [view, setView] = useState('3d')
   const [isPrivate, setIsPrivate] = useState(false)
   const [code, setCode] = useState('')
   const [codeError, setCodeError] = useState('')
@@ -19,7 +18,7 @@ export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
 
   const create = (e) => {
     e.preventDefault()
-    onCreate({ name: roomName, mode, variant, view, isPrivate })
+    onCreate({ name: roomName, mode, variant, isPrivate })
   }
 
   const joinByCode = (e) => {
@@ -60,16 +59,6 @@ export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
               </div>
             </div>
             <div className="field">
-              <span>Cámara</span>
-              <div className="options">
-                {Object.entries(VIEWS).map(([key, v]) => (
-                  <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="field">
               <span>Cancha</span>
               <div className="options">
                 {Object.entries(FIELDS).map(([key, f]) => (
@@ -104,7 +93,7 @@ export default function Rooms({ name, busy, error, onJoin, onCreate, onBack }) {
               <div className="room-info">
                 <strong>{r.name}</strong>
                 <small>
-                  {VARIANTS[r.variant]?.label} · {FIELDS[r.mode]?.label} · {VIEWS[r.view]?.label || VIEWS['3d'].label} · host: {r.host}
+                  {VARIANTS[r.variant]?.label} · {FIELDS[r.mode]?.label} · host: {r.host}
                   {r.started ? ' · jugando' : ''}
                 </small>
               </div>
